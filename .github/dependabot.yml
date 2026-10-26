@@ -1,0 +1,10 @@
+version: 2
+updates:
+  # Keep the GitHub Actions we pin (checkout, codecov, codeql, gh-release) current.
+  # The app itself has no third-party dependencies, so there's nothing else to watch.
+  - package-ecosystem: github-actions
+    directory: "/"
+    schedule:
+      interval: weekly
+    commit-message:
+      prefix: ci

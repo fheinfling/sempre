@@ -1,0 +1,63 @@
+name: release
+
+# Cut a release by pushing a tag: `git tag vX.Y && git push origin vX.Y`.
+# This tests, builds and attests the unsigned universal .app zip, then attaches it to a draft release.
+# The tag's version MUST match VERSION in build.sh (the job verifies and fails otherwise).
+# Sign and notarize locally (see build.sh), then publish the draft.
+
+on:
+  push:
+    tags: ["v*"]
+
+permissions:
+  contents: read
+
+jobs:
+  build-and-release:
+    runs-on: macos-15
+    permissions:
+      contents: write
+      id-token: write
+      attestations: write
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - name: Verify tag matches build.sh VERSION
+        id: version
+        run: |
+          set -euo pipefail
+          CODE_VER="$(sed -n 's/^VERSION=//p' build.sh)"
+          TAG_VER="${GITHUB_REF_NAME#v}"
+          echo "tag=$TAG_VER  code=$CODE_VER"
+          if [ "$TAG_VER" != "$CODE_VER" ]; then
+            echo "::error::tag v$TAG_VER does not match VERSION in build.sh ($CODE_VER). Bump build.sh first."
+            exit 1
+          fi
+          echo "version=$CODE_VER" >> "$GITHUB_OUTPUT"
+
+      - name: Test (gate)
+        run: ./test.sh
+
+      - name: Build universal app
+        env:
+          VERSION: ${{ steps.version.outputs.version }}
+        run: |
+          ./build.sh
+          for a in arm64 x86_64; do lipo build/Sempre.app/Contents/MacOS/Sempre -verify_arch "$a"; done
+          mv "build/Sempre-$VERSION.zip" "Sempre-${GITHUB_REF_NAME}-unsigned.zip"
+          shasum -a 256 "Sempre-${GITHUB_REF_NAME}-unsigned.zip"
+
+      - name: Attest unsigned zip provenance
+        uses: actions/attest-build-provenance@977bb373ede98d70efdf65b84cb5f73e068dcc2a # v3.0.0
+        with:
+          subject-path: Sempre-${{ github.ref_name }}-unsigned.zip
+
+      - name: Create GitHub Release
+        uses: softprops/action-gh-release@efb35369e0ad2afab669f228072c1b0d510eae64 # v3 (pinned SHA; Dependabot keeps it current)
+        with:
+          name: ${{ github.ref_name }}
+          draft: true
+          generate_release_notes: true
+          files: Sempre-${{ github.ref_name }}-unsigned.zip
+          body: |
+            Draft awaiting local Developer ID signing and notarization.
