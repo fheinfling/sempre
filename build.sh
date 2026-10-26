@@ -52,6 +52,7 @@ else
   codesign --force --options runtime --timestamp --sign "$IDENTITY" "$APP"
 fi
 codesign --verify --strict "$APP"
+for ARCH in arm64 x86_64; do lipo "$APP/Contents/MacOS/Sempre" -verify_arch "$ARCH"; done
 
 ditto -c -k --keepParent "$APP" "$ZIP"
 if [ -n "${NOTARY_PROFILE:-}" ]; then

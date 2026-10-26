@@ -11,6 +11,11 @@ on:
 permissions:
   contents: read        # least-privilege GITHUB_TOKEN (tests need only checkout)
 
+# A new push to the same branch or PR supersedes the run in progress.
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
 jobs:
   platform_tests:
     strategy:
@@ -27,10 +32,11 @@ jobs:
             arch: x86_64
             build: true
             smoke: false
+          # Same OS as the screenshots workflow, so what it renders is checked on every PR.
           - os: macos-26
             arch: arm64
-            build: false
-            smoke: false
+            build: true
+            smoke: true
     runs-on: ${{ matrix.os }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -45,10 +51,7 @@ jobs:
 
       - name: Build universal app
         if: matrix.build
-        run: |
-          ./build.sh
-          for a in arm64 x86_64; do lipo build/Sempre.app/Contents/MacOS/Sempre -verify_arch "$a"; done
-          codesign --verify --strict build/Sempre.app
+        run: ./build.sh   # also verifies both architectures and the signature
 
       - name: Smoke-test the app
         # Launches the built binary with demo data and renders every view; fails if any is missing.
@@ -57,7 +60,7 @@ jobs:
           OUT="$RUNNER_TEMP/snapshots"
           mkdir -p "$OUT"
           build/Sempre.app/Contents/MacOS/Sempre --snapshot "$OUT"
-          for shot in Track Stats Month ProjectYear All Icon; do
+          for shot in Track Track-dark Stats Stats-dark Month Month-dark ProjectYear All Icon; do
             test -s "$OUT/$shot.png" || { echo "::error::missing snapshot $shot.png"; exit 1; }
           done
 
@@ -73,7 +76,7 @@ jobs:
   # added, so expose one gate that needs every platform to pass.
   test:
     needs: [platform_tests]
-    if: ${{ always() }}
+    if: ${{ !cancelled() }}
     runs-on: ubuntu-latest
     steps:
       - name: Require every platform to pass

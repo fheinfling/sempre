@@ -11,6 +11,11 @@ on:
   schedule:
     - cron: "41 5 * * 1"   # Mondays 05:41 UTC — catch newly-published CodeQL rules
 
+# A new push to the same branch or PR supersedes the run in progress (the Swift scan takes ~15 min).
+concurrency:
+  group: codeql-${{ github.ref }}
+  cancel-in-progress: true
+
 jobs:
   analyze:
     permissions:

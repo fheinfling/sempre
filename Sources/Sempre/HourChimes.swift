@@ -341,8 +341,6 @@ struct PendulumSwing {
 
     func draw(_ ctx: inout GraphicsContext, t: Double) {
         let p = min(1, max(0, t / swing))
-        let eased = Brass.ease(p)
-        let angle = Angle.degrees(amplitude - 2 * amplitude * eased)        // + is bob to the left
 
         // Sparks shed along the way: more where the bob moves fastest. They keep glittering and
         // fade on their own, even after the pendulum itself has gone.
@@ -357,8 +355,7 @@ struct PendulumSwing {
         guard opacity > 0.01 else { return }
 
         let pivot = CGPoint(x: size.width / 2, y: 0)
-        let length = size.height * 0.6
-        let bob = CGPoint(x: pivot.x - CGFloat(sin(angle.radians)) * length, y: pivot.y + CGFloat(cos(angle.radians)) * length)
+        let bob = self.bob(at: p)
         var rod = Path()
         rod.move(to: pivot)
         rod.addLine(to: bob)
