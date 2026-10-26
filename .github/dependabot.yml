@@ -8,3 +8,7 @@ updates:
       interval: weekly
     commit-message:
       prefix: ci
+    groups:
+      # init and analyze must stay on the same version, so they're bumped in one PR.
+      codeql:
+        patterns: ["github/codeql-action*"]
