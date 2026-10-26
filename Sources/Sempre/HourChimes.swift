@@ -333,7 +333,7 @@ struct PendulumSwing {
         let angle = Angle.degrees(amplitude - 2 * amplitude * Brass.ease(min(1, max(0, p))))
         let pivot = CGPoint(x: size.width / 2, y: 0)
         let length = size.height * 0.6
-        return CGPoint(x: pivot.x - sin(angle.radians) * length, y: pivot.y + cos(angle.radians) * length)
+        return CGPoint(x: pivot.x - CGFloat(sin(angle.radians)) * length, y: pivot.y + CGFloat(cos(angle.radians)) * length)
     }
 
     /// Speed of the swing at `p`, 0 at the ends and 1 in the middle.
@@ -358,7 +358,7 @@ struct PendulumSwing {
 
         let pivot = CGPoint(x: size.width / 2, y: 0)
         let length = size.height * 0.6
-        let bob = CGPoint(x: pivot.x - sin(angle.radians) * length, y: pivot.y + cos(angle.radians) * length)
+        let bob = CGPoint(x: pivot.x - CGFloat(sin(angle.radians)) * length, y: pivot.y + CGFloat(cos(angle.radians)) * length)
         var rod = Path()
         rod.move(to: pivot)
         rod.addLine(to: bob)
