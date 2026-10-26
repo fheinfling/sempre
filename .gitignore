@@ -1,0 +1,17 @@
+# Build output
+.build/
+build/
+*.zip
+
+# Never commit personal data or signing material
+*.json
+*.data
+*.data-wal
+*.data-shm
+*.sqlite*
+*.p12
+*.cer
+*.mobileprovision
+
+.DS_Store
+.swiftpm/
