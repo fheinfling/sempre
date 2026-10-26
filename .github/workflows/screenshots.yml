@@ -1,0 +1,54 @@
+name: screenshots
+
+# Renders the README screenshots from demo data on a runner and publishes them to the `screenshots`
+# branch as a single force-pushed commit, so that branch never grows. The README loads them from there.
+# Runs when the UI changes on main, or by hand (Actions › screenshots › Run workflow).
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - "Sources/**"
+      - "Resources/**"
+      - ".github/workflows/screenshots.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: screenshots
+  cancel-in-progress: true
+
+jobs:
+  render:
+    runs-on: macos-26           # Apple Silicon: the renderer needs a GPU (Intel runners have none)
+    permissions:
+      contents: write           # push the screenshots branch
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - name: Render from demo data
+        run: |
+          swift build
+          SHOTS="$RUNNER_TEMP/shots"
+          mkdir -p "$SHOTS"
+          "$(swift build --show-bin-path)/Sempre" --snapshot "$SHOTS"
+          SITE="$RUNNER_TEMP/site"
+          mkdir -p "$SITE"
+          for view in Track Month; do
+            for look in "" -dark; do
+              cp "$SHOTS/$view$look.png" "$SITE/$(echo "$view" | tr '[:upper:]' '[:lower:]')$look.png"
+            done
+          done
+          sips -s format png -Z 128 Resources/AppIcon.icns --out "$SITE/icon.png"
+          ls -la "$SITE"
+
+      - name: Publish to the screenshots branch
+        run: |
+          git switch --orphan screenshots   # starts with an empty tree
+          cp "$RUNNER_TEMP"/site/*.png .
+          git add ./*.png
+          git -c user.name="github-actions[bot]" -c user.email="41898282+github-actions[bot]@users.noreply.github.com" \
+            commit -q -m "Screenshots for ${GITHUB_SHA::7}"
+          git push --force origin screenshots
