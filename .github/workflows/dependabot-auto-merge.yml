@@ -16,7 +16,8 @@ permissions:
 
 jobs:
   auto-merge:
-    if: ${{ github.actor == 'dependabot[bot]' }}
+    # The PR's author, not github.actor (whoever triggered this event), is what proves it's Dependabot's.
+    if: ${{ github.event.pull_request.user.login == 'dependabot[bot]' }}
     runs-on: ubuntu-latest
     steps:
       - name: Fetch Dependabot metadata

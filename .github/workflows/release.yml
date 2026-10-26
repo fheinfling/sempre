@@ -42,8 +42,7 @@ jobs:
         env:
           VERSION: ${{ steps.version.outputs.version }}
         run: |
-          ./build.sh
-          for a in arm64 x86_64; do lipo build/Sempre.app/Contents/MacOS/Sempre -verify_arch "$a"; done
+          ./build.sh   # also verifies both architectures and the signature
           mv "build/Sempre-$VERSION.zip" "Sempre-${GITHUB_REF_NAME}-unsigned.zip"
           shasum -a 256 "Sempre-${GITHUB_REF_NAME}-unsigned.zip"
 

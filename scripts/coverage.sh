@@ -6,8 +6,10 @@ cd "$(dirname "$0")/.."
 
 ./test.sh --enable-code-coverage
 PROF="$(dirname "$(swift test --show-codecov-path)")/default.profdata"
-# The test bundle is SempreCoreTests.xctest or SempreCorePackageTests.xctest, depending on the SwiftPM version.
-BUNDLE="$(find "$(swift build --show-bin-path)" -maxdepth 1 -name '*.xctest' | head -1)"
+# The test bundle is SempreCoreTests.xctest or SempreCorePackageTests.xctest, depending on the SwiftPM version;
+# take the newest, in case an older toolchain left the other one behind.
+BUNDLE="$(ls -td "$(swift build --show-bin-path)"/*.xctest 2>/dev/null | head -1)"
+[ -n "$BUNDLE" ] || { echo "coverage.sh: no .xctest bundle found after the test run" >&2; exit 1; }
 BIN="$BUNDLE/Contents/MacOS/$(basename "$BUNDLE" .xctest)"
 IGNORE='(\.build|Tests)/'
 
