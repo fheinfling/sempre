@@ -44,9 +44,11 @@ public enum TymeImporter {
 
     private final class DB {
         var handle: OpaquePointer?
+        /// The copy holds the user's whole Tyme history, so deinit deletes it again (also when init throws).
+        private let tmp = FileManager.default.temporaryDirectory.appendingPathComponent("sempre-import-\(UUID().uuidString)")
+
         init(_ url: URL) throws {
             // Work on a copy so we never touch Tyme's live store (and include WAL changes).
-            let tmp = FileManager.default.temporaryDirectory.appendingPathComponent("sempre-import-\(UUID().uuidString)")
             try FileManager.default.createDirectory(at: tmp, withIntermediateDirectories: true)
             let dst = tmp.appendingPathComponent(url.lastPathComponent)
             for suffix in ["", "-wal", "-shm"] {
@@ -60,7 +62,10 @@ public enum TymeImporter {
                 throw ImportError(message: "Could not open \(url.lastPathComponent).")
             }
         }
-        deinit { sqlite3_close(handle) }
+        deinit {
+            sqlite3_close(handle)
+            try? FileManager.default.removeItem(at: tmp)
+        }
 
         func rows(_ sql: String) -> [[String: Any]] {
             var stmt: OpaquePointer?
