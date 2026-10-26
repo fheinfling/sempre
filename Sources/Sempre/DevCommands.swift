@@ -82,7 +82,12 @@ enum DevCommands {
         window.contentView = host
         host.layoutSubtreeIfNeeded()
         RunLoop.main.run(until: Date().addingTimeInterval(0.3)) // let Charts finish drawing
-        guard let rep = host.bitmapImageRepForCachingDisplay(in: host.bounds) else { return nil }
+        // A fixed 2× bitmap rather than the screen's scale, so CI runners (1× displays) render sharp shots too.
+        let size = host.bounds.size
+        guard let rep = NSBitmapImageRep(bitmapDataPlanes: nil, pixelsWide: Int(size.width * 2), pixelsHigh: Int(size.height * 2),
+                                         bitsPerSample: 8, samplesPerPixel: 4, hasAlpha: true, isPlanar: false,
+                                         colorSpaceName: .deviceRGB, bytesPerRow: 0, bitsPerPixel: 0) else { return nil }
+        rep.size = size
         host.cacheDisplay(in: host.bounds, to: rep)
         return rep.representation(using: .png, properties: [:])
     }
