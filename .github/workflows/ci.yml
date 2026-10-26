@@ -1,0 +1,77 @@
+name: ci
+
+# Test pipeline: runs the test suite with coverage on every push to main and every PR, builds the
+# universal app and smoke-tests it. Free for public repos. macOS runners only: it's a macOS app.
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+permissions:
+  contents: read        # least-privilege GITHUB_TOKEN (tests need only checkout)
+
+jobs:
+  platform_tests:
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: macos-15
+            arch: arm64
+            build: true
+          - os: macos-15-intel
+            arch: x86_64
+            build: true
+          - os: macos-26
+            arch: arm64
+            build: false
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - name: Toolchain
+        run: |
+          xcodebuild -version
+          swift --version
+
+      - name: Run tests with coverage
+        run: ./scripts/coverage.sh
+
+      - name: Build universal app
+        if: matrix.build
+        run: |
+          ./build.sh
+          for a in arm64 x86_64; do lipo build/Sempre.app/Contents/MacOS/Sempre -verify_arch "$a"; done
+          codesign --verify --strict build/Sempre.app
+
+      - name: Smoke-test the app
+        # Launches the built binary with demo data and renders every view; fails if any is missing.
+        if: matrix.build
+        run: |
+          OUT="$RUNNER_TEMP/snapshots"
+          mkdir -p "$OUT"
+          build/Sempre.app/Contents/MacOS/Sempre --snapshot "$OUT"
+          for shot in Track Stats Month ProjectYear All Icon; do
+            test -s "$OUT/$shot.png" || { echo "::error::missing snapshot $shot.png"; exit 1; }
+          done
+
+      - name: Upload coverage to Codecov
+        uses: codecov/codecov-action@303a32d7a59b442fa8d48b6a1cc6825c09c847a5 # v7 (pinned SHA; Dependabot keeps it current)
+        with:
+          token: ${{ secrets.CODECOV_TOKEN }}   # add this secret once at codecov.io
+          files: coverage.lcov
+          flags: ${{ matrix.os }}
+          fail_ci_if_error: false                # don't break CI if the token isn't set yet
+
+  # Branch protection requires the stable `test` context. Matrix names change as platforms are
+  # added, so expose one gate that needs every platform to pass.
+  test:
+    needs: [platform_tests]
+    if: ${{ always() }}
+    runs-on: ubuntu-latest
+    steps:
+      - name: Require every platform to pass
+        env:
+          MATRIX_RESULT: ${{ needs.platform_tests.result }}
+        run: test "$MATRIX_RESULT" = success

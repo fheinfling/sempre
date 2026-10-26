@@ -5,6 +5,14 @@
 A small time tracker that lives in the macOS menu bar.
 
 <p>
+  <a href="https://github.com/fheinfling/sempre/actions/workflows/ci.yml"><img alt="ci" src="https://github.com/fheinfling/sempre/actions/workflows/ci.yml/badge.svg"></a>
+  <a href="https://codecov.io/gh/fheinfling/sempre"><img alt="coverage" src="https://codecov.io/gh/fheinfling/sempre/branch/main/graph/badge.svg"></a>
+  <img alt="platform" src="https://img.shields.io/badge/macOS-14%2B-black?logo=apple">
+  <img alt="swift" src="https://img.shields.io/badge/swift-5.10%2B-orange?logo=swift&logoColor=white">
+  <a href="LICENSE"><img alt="license" src="https://img.shields.io/badge/license-MIT-green"></a>
+</p>
+
+<p>
   <picture>
     <source media="(prefers-color-scheme: dark)" srcset="docs/track-dark.png">
     <img src="docs/track.png" width="320" alt="Track: a running timer and the project list">
@@ -42,6 +50,9 @@ See the top of `build.sh` for Developer ID signing and notarization. No signing 
 
 Runs the Swift Testing suite in `Tests/SempreCoreTests`. It works with Xcode or with just the Command Line Tools.
 The Tyme tests build a small fake Tyme database on the fly; no real Tyme data is involved.
+
+`scripts/coverage.sh` runs the same suite with code coverage, prints a summary and writes `coverage.lcov`.
+CI runs it on every push and pull request and uploads it to Codecov.
 
 ## Structure
 
