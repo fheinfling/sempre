@@ -38,6 +38,7 @@ enum Tab: String, CaseIterable { case track = "Track", stats = "Stats" }
 struct ContentView: View {
     @EnvironmentObject var store: Store
     @State private var tab: Tab
+    @State private var importMessage: String?
     @AppStorage("showProjectName") private var showProjectName = true
     @AppStorage("menuBarTime") private var menuBarTime = MenuBarTime.timer
     @AppStorage("chimeStyle") private var chimeStyle = ChimeStyle.brassDust
@@ -60,7 +61,7 @@ struct ContentView: View {
                 }
             }
 
-            if let msg = store.lastError {
+            if let msg = importMessage ?? store.lastError {
                 Text(msg)
                     .font(.caption)
                     .foregroundStyle(.secondary)
@@ -100,6 +101,7 @@ struct ContentView: View {
                     set: { LoginItem.set($0); openAtLogin = LoginItem.isEnabled }
                 ))
                 Divider()
+                Button("Import CSV…") { runImport() }
                 Button("Show Data File") { store.revealDataFile() }
                 Divider()
                 Button("Quit Sempre") { NSApp.terminate(nil) }
@@ -114,6 +116,18 @@ struct ContentView: View {
         .foregroundStyle(.secondary)
         .padding(.horizontal, 12)
         .padding(.vertical, 8)
+    }
+
+    private func runImport() {
+        do {
+            guard let url = CSVImport.pickFile() else { return }
+            let result = try CSVImport.read(url)
+            let n = store.importEntries(result.rows)
+            importMessage = "Imported \(n.entries) time entries and \(n.projects) new projects."
+                + (result.skipped > 0 ? " Skipped \(result.skipped) rows without a start and end." : "")
+        } catch {
+            importMessage = "Import failed: \(error.localizedDescription)"
+        }
     }
 }
 

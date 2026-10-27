@@ -229,6 +229,51 @@ public final class Store: ObservableObject {
         save()
     }
 
+    /// Adds imported entries, matching projects and subprojects by name (ignoring case) and creating missing ones.
+    /// Entries already there (same project, start and end) are skipped, so importing a file twice adds nothing.
+    @discardableResult
+    public func importEntries(_ rows: [CSVImport.Row]) -> (projects: Int, entries: Int) {
+        func key(_ s: String) -> String { s.trimmingCharacters(in: .whitespaces).lowercased() }
+        func entryKey(_ projectID: UUID, _ start: Date, _ end: Date) -> String {
+            "\(projectID)/\(Int(start.timeIntervalSinceReferenceDate))/\(Int(end.timeIntervalSinceReferenceDate))"
+        }
+        var projectIDs = Dictionary(library.projects.map { (key($0.name), $0.id) }) { first, _ in first }
+        var subprojectIDs = Dictionary(library.subprojects.map { ("\($0.projectID)/\(key($0.name))", $0.id) }) { first, _ in first }
+        var known = Set(library.entries.compactMap { e in e.end.map { entryKey(e.projectID, e.start, $0) } })
+        var newProjects = 0, newEntries = 0
+        for row in rows {
+            let name = row.project.trimmingCharacters(in: .whitespaces)
+            let projectID: UUID
+            if let id = projectIDs[key(name)] {
+                projectID = id
+            } else {
+                let p = Project(name: name, color: library.projects.count)
+                library.projects.append(p)
+                projectIDs[key(name)] = p.id
+                projectID = p.id
+                newProjects += 1
+            }
+            guard known.insert(entryKey(projectID, row.start, row.end)).inserted else { continue }
+            var subprojectID: UUID?
+            if let task = row.task?.trimmingCharacters(in: .whitespaces), !task.isEmpty {
+                let k = "\(projectID)/\(key(task))"
+                if let id = subprojectIDs[k] {
+                    subprojectID = id
+                } else {
+                    let s = Subproject(projectID: projectID, name: task)
+                    library.subprojects.append(s)
+                    subprojectIDs[k] = s.id
+                    subprojectID = s.id
+                }
+            }
+            library.entries.append(Entry(projectID: projectID, subprojectID: subprojectID, start: row.start, end: row.end))
+            newEntries += 1
+        }
+        library.entries.sort { $0.start < $1.start }
+        save()
+        return (newProjects, newEntries)
+    }
+
     // MARK: Persistence
 
     private func tick() {
