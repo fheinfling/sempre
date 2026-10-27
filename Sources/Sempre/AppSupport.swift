@@ -1,5 +1,6 @@
 import AppKit
 import SwiftUI
+import UniformTypeIdentifiers
 import SempreCore
 
 enum Palette {
@@ -35,6 +36,21 @@ extension Project {
 extension Store {
     func revealDataFile() {
         NSWorkspace.shared.activateFileViewerSelecting([fileURL])
+    }
+}
+
+extension CSVImport {
+    /// Asks for a CSV file exported from another time tracker. nil when cancelled.
+    @MainActor
+    static func pickFile() -> URL? {
+        let panel = NSOpenPanel()
+        panel.title = "Import Time Entries"
+        panel.message = "Choose a CSV file exported from your time tracker. Importing it again only adds what's new."
+        panel.allowedContentTypes = [.commaSeparatedText, .tabSeparatedText, .plainText]
+        panel.allowsMultipleSelection = false
+        NSApp.activate(ignoringOtherApps: true)
+        guard panel.runModal() == .OK else { return nil }
+        return panel.url
     }
 }
 

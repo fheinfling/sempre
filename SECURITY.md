@@ -16,6 +16,7 @@ We'll acknowledge within a few days and work with you on a fix and coordinated d
 
 In scope:
 - Exposure of tracked data: the data file (`iCloud Drive/Sempre/sempre.json`), temporary files, logs.
+- The CSV importer reading an untrusted or malformed file.
 - Data loss or corruption through sync between Macs.
 - The build and release scripts (`build.sh`, the GitHub workflows).
 
