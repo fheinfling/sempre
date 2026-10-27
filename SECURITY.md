@@ -26,6 +26,13 @@ Out of scope:
 - Vulnerabilities in macOS, iCloud Drive or Tyme itself.
 - Physical access to an already-unlocked Mac.
 
+## Release signing
+
+Releases are signed and notarized by the `release` workflow. Its signing job runs only for `v*` tags (which only the
+maintainer can create) and only after the maintainer approves it. It uses a Developer ID certificate kept just for
+CI and an App Store Connect API key, both stored as secrets of the `release` environment. No other job,
+pull request or fork can read them. Each release zip has a provenance attestation (`gh attestation verify`).
+
 ## Supported versions
 
 Only the latest release / `main` is supported. Please test against the newest version before reporting.

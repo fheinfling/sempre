@@ -61,14 +61,18 @@ CI runs it on every push and pull request and uploads it to Codecov.
 - `Tests/SempreCoreTests`: tests for everything in `SempreCore`.
 - `Resources/AppIcon.icns`: the app icon, drawn by `scripts/make-icon.swift`; run `scripts/make-icon.sh` after changing it.
 
-## Install from the zip
+## Install
 
-Unzip and move `Sempre.app` to Applications. Unless the build was signed with a Developer ID,
-macOS blocks the first launch: right-click the app › Open, or run
+Download `Sempre-vX.Y.zip` from [Releases](https://github.com/fheinfling/sempre/releases), unzip it and move
+`Sempre.app` to Applications. Releases are signed with a Developer ID and notarized by Apple, so it opens normally.
+To check that a zip was built and signed by this repo's release workflow:
 
 ```sh
-xattr -dr com.apple.quarantine /Applications/Sempre.app
+gh attestation verify Sempre-vX.Y.zip --repo fheinfling/sempre
 ```
+
+A zip you built yourself without `SIGN_IDENTITY` is only ad-hoc signed; on another Mac, right-click the app › Open
+the first time, or run `xattr -dr com.apple.quarantine /Applications/Sempre.app`.
 
 ## Import from Tyme 2
 
