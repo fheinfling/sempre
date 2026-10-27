@@ -1,0 +1,83 @@
+<img src="https://raw.githubusercontent.com/fheinfling/sempre/screenshots/icon.png" width="96" alt="Sempre app icon: a walnut metronome">
+
+# Sempre
+
+A small time tracker that lives in the macOS menu bar.
+
+<p>
+  <a href="https://github.com/fheinfling/sempre/actions/workflows/ci.yml"><img alt="ci" src="https://github.com/fheinfling/sempre/actions/workflows/ci.yml/badge.svg"></a>
+  <a href="https://codecov.io/gh/fheinfling/sempre"><img alt="coverage" src="https://codecov.io/gh/fheinfling/sempre/branch/main/graph/badge.svg"></a>
+  <img alt="platform" src="https://img.shields.io/badge/macOS-14%2B-black?logo=apple">
+  <img alt="swift" src="https://img.shields.io/badge/swift-6.1%2B-orange?logo=swift&logoColor=white">
+  <a href="LICENSE"><img alt="license" src="https://img.shields.io/badge/license-MIT-green"></a>
+</p>
+
+<p>
+  <picture>
+    <source media="(prefers-color-scheme: dark)" srcset="https://raw.githubusercontent.com/fheinfling/sempre/screenshots/track-dark.png">
+    <img src="https://raw.githubusercontent.com/fheinfling/sempre/screenshots/track.png" width="320" alt="Track: a running timer and the project list">
+  </picture>
+  <picture>
+    <source media="(prefers-color-scheme: dark)" srcset="https://raw.githubusercontent.com/fheinfling/sempre/screenshots/month-dark.png">
+    <img src="https://raw.githubusercontent.com/fheinfling/sempre/screenshots/month.png" width="320" alt="Stats: a month of tracked time per project">
+  </picture>
+</p>
+
+- Add projects (and optional subprojects), click to start and stop
+- Animated metronome in the menu bar while a timer runs, with `h:mm` and the odd nudge
+- Stats by week, month, year or all time, per project, with days worked
+- Edit, add or delete entries; add breaks as a length or an exact time
+- Syncs between Macs through iCloud Drive (`iCloud Drive/Sempre/sempre.json`)
+- No third-party dependencies
+
+Requires macOS 14 or later (Apple Silicon or Intel).
+
+## Build
+
+```sh
+./build.sh
+```
+
+Builds a universal `build/Sempre.app`, packs `build/Sempre-<version>.zip` and installs the app to `~/Applications`.
+See the top of `build.sh` for Developer ID signing and notarization. No signing material lives in this repo.
+
+## Test
+
+```sh
+./test.sh
+```
+
+Runs the Swift Testing suite in `Tests/SempreCoreTests`. It works with Xcode or with just the Command Line Tools.
+
+`scripts/coverage.sh` runs the same suite with code coverage, prints a summary and writes `coverage.lcov`.
+CI runs it on every push and pull request and uploads it to Codecov.
+
+## Structure
+
+- `Sources/SempreCore`: data model, storage and sync (`Store`), formatting. No UI.
+- `Sources/Sempre`: the menu bar app (SwiftUI), the animated menu bar icon and developer flags.
+- `Tests/SempreCoreTests`: tests for everything in `SempreCore`.
+- `Resources/AppIcon.icns`: the app icon, drawn by `scripts/make-icon.swift`; run `scripts/make-icon.sh` after changing it.
+
+## Install
+
+Download `Sempre-vX.Y.zip` from [Releases](https://github.com/fheinfling/sempre/releases), unzip it and move
+`Sempre.app` to Applications. Releases are signed with a Developer ID and notarized by Apple, so it opens normally.
+To check that a zip was built and signed by this repo's release workflow:
+
+```sh
+gh attestation verify Sempre-vX.Y.zip --repo fheinfling/sempre
+```
+
+A zip you built yourself without `SIGN_IDENTITY` is only ad-hoc signed; on another Mac, right-click the app › Open
+the first time, or run `xattr -dr com.apple.quarantine /Applications/Sempre.app`.
+
+## Developer flags
+
+- `Sempre --snapshot <dir> [--real]` renders the UI to PNGs (light and dark), with demo data or (read-only) your own.
+  The README screenshots come from this too: the `screenshots` workflow renders them from demo data whenever
+  the UI changes on `main` and publishes them to the `screenshots` branch.
+
+## License
+
+MIT, see [LICENSE](LICENSE).

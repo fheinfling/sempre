@@ -1,0 +1,45 @@
+name: codeql
+
+# Static security analysis (GitHub code scanning). Free for public repos. Swift is the app; actions
+# scans the workflow files themselves. Runs on push/PR + weekly.
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+  schedule:
+    - cron: "41 5 * * 1"   # Mondays 05:41 UTC — catch newly-published CodeQL rules
+
+# A new push to the same branch or PR supersedes the run in progress (the Swift scan takes ~15 min).
+concurrency:
+  group: codeql-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  analyze:
+    permissions:
+      security-events: write       # upload results to the Security tab
+      contents: read
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - language: swift
+            os: macos-15           # Swift analysis needs a macOS build
+            build-mode: manual
+          - language: actions      # workflow files (permissions, pinning)
+            os: ubuntu-latest
+            build-mode: none
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: github/codeql-action/init@9b3254085494b55a0f7c4c2b3d2d52cc712ce370 # v4.39.1
+        with:
+          languages: ${{ matrix.language }}
+          build-mode: ${{ matrix.build-mode }}
+          queries: security-extended
+      - name: Build
+        if: matrix.build-mode == 'manual'
+        run: swift build
+      - uses: github/codeql-action/analyze@9b3254085494b55a0f7c4c2b3d2d52cc712ce370 # v4.39.1
