@@ -10,8 +10,8 @@
 set -euo pipefail
 cd "$(dirname "$0")"
 
-VERSION=1.1
-BUILD=2
+VERSION=1.2
+BUILD=3
 IDENTITY="${SIGN_IDENTITY:--}"
 
 APP=build/Sempre.app
