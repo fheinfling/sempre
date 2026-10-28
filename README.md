@@ -55,7 +55,7 @@ CI runs it on every push and pull request and uploads it to Codecov.
 
 ## Structure
 
-- `Sources/SempreCore`: data model, storage and sync (`Store`), formatting, CSV import. No UI.
+- `Sources/SempreCore`: data model, storage and sync (`Store`), formatting, CSV import, update checks (`Updates`). No UI.
 - `Sources/Sempre`: the menu bar app (SwiftUI), the animated menu bar icon and developer flags.
 - `Tests/SempreCoreTests`: tests for everything in `SempreCore`.
 - `Resources/AppIcon.icns`: the app icon, drawn by `scripts/make-icon.swift`; run `scripts/make-icon.sh` after changing it.
@@ -72,6 +72,15 @@ gh attestation verify Sempre-vX.Y.zip --repo fheinfling/sempre
 
 A zip you built yourself without `SIGN_IDENTITY` is only ad-hoc signed; on another Mac, right-click the app › Open
 the first time, or run `xattr -dr com.apple.quarantine /Applications/Sempre.app`.
+
+### Updates
+
+Once a day Sempre asks GitHub for the latest published release. When there's a newer version it offers to update
+(Update / Later / Skip This Version); ⋯ › Check for Updates… checks right away, and ⋯ › Check for Updates Automatically
+turns the daily check off. On Update it downloads the release zip and only installs it if it's notarized by Apple and
+signed by the same developer as the running app, then swaps it in (the old version goes to the Trash) and restarts.
+Your data isn't touched. Where it can't install by itself (a build you made, or an app it can't write to), it opens
+the release page instead.
 
 ## Import from other apps
 
@@ -112,6 +121,8 @@ Columns are found by their header (case, spaces and punctuation don't matter; ot
 - `Sempre --snapshot <dir> [--real]` renders the UI to PNGs (light and dark), with demo data or (read-only) your own.
   The README screenshots come from this too: the `screenshots` workflow renders them from demo data whenever
   the UI changes on `main` and publishes them to the `screenshots` branch.
+- `Sempre --update-check <Sempre.app>` fetches the latest release, downloads it and runs every check the updater runs,
+  against the signature of the given (Developer ID signed) app. It installs nothing.
 
 ## License
 
