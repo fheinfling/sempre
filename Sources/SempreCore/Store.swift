@@ -30,9 +30,12 @@ public final class Store: ObservableObject {
         self.usesICloud = usesICloud
         try? FileManager.default.createDirectory(at: fileURL.deletingLastPathComponent(), withIntermediateDirectories: true)
         reloadIfChanged(force: true)
-        timer = Timer.scheduledTimer(withTimeInterval: 1, repeats: true) { [weak self] _ in
+        let t = Timer(timeInterval: 1, repeats: true) { [weak self] _ in
             MainActor.assumeIsolated { self?.tick() }
         }
+        // .common keeps time, sync and chimes going while a menu or an alert (e.g. an update offer) is open.
+        RunLoop.main.add(t, forMode: .common)
+        timer = t
     }
 
     /// `<root>/Sempre/sempre.json`. The app used to be called Tempo, so `<root>/Tempo/tempo.json` moves there once.

@@ -83,6 +83,12 @@ struct UpdatesTests {
         #expect(r.download == nil)
     }
 
+    @Test func releasePageMustBeAWebAddress() {
+        let json = String(decoding: latestJSON(), as: UTF8.self)
+            .replacingOccurrences(of: "https://github.com/fheinfling/sempre/releases/tag/v1.2", with: "file:///Applications/Calculator.app")
+        #expect(throws: Updates.UpdateError.self) { try Updates.parseLatest(Data(json.utf8)) }
+    }
+
     @Test func draftsAndNonsenseAreRejected() {
         #expect(throws: Updates.UpdateError.self) { try Updates.parseLatest(latestJSON(draft: true)) }
         #expect(throws: Updates.UpdateError.self) { try Updates.parseLatest(Data(#"{"message": "Not Found"}"#.utf8)) }
@@ -169,5 +175,19 @@ struct UpdatesTests {
         #expect(Updates.version(of: old) == "1.1")
         #expect(old.deletingLastPathComponent() == current.deletingLastPathComponent())
         #expect(!FileManager.default.fileExists(atPath: new.path))
+    }
+
+    @Test func swappingNeverOverwritesAnotherFile() throws {
+        let dir = tempDir()
+        let current = try makeApp(in: dir.appendingPathComponent("Applications"), version: "1.1")
+        let keep = dir.appendingPathComponent("Applications/Sempre (previous).app")
+        try FileManager.default.createDirectory(at: keep, withIntermediateDirectories: true)
+        let first = try Updates.replace(current, with: try makeApp(in: dir.appendingPathComponent("a"), version: "1.2"))
+        let second = try Updates.replace(current, with: try makeApp(in: dir.appendingPathComponent("b"), version: "1.3"))
+        #expect(first != second)
+        #expect(Updates.version(of: first) == "1.1")
+        #expect(Updates.version(of: second) == "1.2")
+        #expect(Updates.version(of: current) == "1.3")
+        #expect(FileManager.default.fileExists(atPath: keep.path))
     }
 }

@@ -109,10 +109,11 @@ struct ContentView: View {
                 Button("Import CSV…") { runImport() }
                 Button("Show Data File") { store.revealDataFile() }
                 Divider()
-                Button(updater.busy ? "Checking for Updates…" : "Check for Updates…") {
+                Button(updater.status == .checking ? "Checking for Updates…"
+                       : updater.status == .installing ? "Installing Update…" : "Check for Updates…") {
                     Task { await updater.check(userInitiated: true) }
                 }
-                .disabled(updater.busy)
+                .disabled(updater.status != .idle)
                 Toggle("Check for Updates Automatically", isOn: $checkForUpdates)
                 Divider()
                 Button("Quit Sempre") { NSApp.terminate(nil) }

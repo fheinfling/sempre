@@ -52,6 +52,8 @@ public enum Updates {
             throw UpdateError(message: "GitHub's answer wasn't a release.")
         }
         guard r.draft != true, r.prerelease != true else { throw UpdateError(message: "The latest release isn't published yet.") }
+        // The page gets opened as a fallback, so like the download it has to be a web address.
+        guard r.html_url.scheme == "https" else { throw UpdateError(message: "GitHub's answer wasn't a release.") }
         let asset = r.assets.first { $0.name == "Sempre-\(r.tag_name).zip" && $0.browser_download_url.scheme == "https" }
         return Release(version: strip(r.tag_name), notes: r.body ?? "", page: r.html_url,
                        download: asset?.browser_download_url, size: asset?.size)
@@ -132,14 +134,13 @@ public enum Updates {
 
     /// Swaps `new` into the place of `current` in one step (both must be on the same volume) and returns
     /// where the old version ended up, next to the new one, for the caller to move to the Trash.
+    /// The old version gets a name nothing else has, so no existing file is ever overwritten.
     @discardableResult
     public static func replace(_ current: URL, with new: URL) throws -> URL {
-        let backupName = "Sempre (previous).app"
-        let backup = current.deletingLastPathComponent().appendingPathComponent(backupName)
-        try? FileManager.default.removeItem(at: backup)
+        let backupName = "Sempre (replaced \(UUID().uuidString.prefix(8))).app"
         _ = try FileManager.default.replaceItemAt(current, withItemAt: new, backupItemName: backupName,
                                                   options: .withoutDeletingBackupItem)
-        return backup
+        return current.deletingLastPathComponent().appendingPathComponent(backupName)
     }
 
     private static func staticCode(_ app: URL) -> SecStaticCode? {

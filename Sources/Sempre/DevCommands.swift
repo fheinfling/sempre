@@ -39,8 +39,9 @@ enum DevCommands {
         let top = store.projects.first?.id
         shots.append(("ProjectYear", AnyView(StatsView(period: .year, projectID: top).frame(width: 320))))
         shots.append(("All", AnyView(StatsView(period: .all).frame(width: 320))))
+        let updater = Updater(automatic: false)
         for (name, shot) in shots {
-            let view = shot.environmentObject(store).environmentObject(Updater()).background(Color(nsColor: .windowBackgroundColor))
+            let view = shot.environmentObject(store).environmentObject(updater).background(Color(nsColor: .windowBackgroundColor))
             for (suffix, look) in [("", NSAppearance.Name.aqua), ("-dark", .darkAqua)] {
                 try? windowImage(view, appearance: look)?.write(to: out.appendingPathComponent("\(name)\(suffix).png"))
             }
@@ -68,7 +69,7 @@ enum DevCommands {
                 guard let requirement = Updates.requirement(of: reference) else {
                     throw Updates.UpdateError(message: "\(reference.path) isn't signed by a Developer ID team.")
                 }
-                let updater = Updater()
+                let updater = Updater(automatic: false)
                 let latest = try await updater.fetchLatest()
                 print("latest release: \(latest.version), \(latest.download?.absoluteString ?? "no Sempre zip attached")")
                 guard let url = latest.download else { exit(1) }
