@@ -128,7 +128,14 @@ jobs:
             echo "::error::notarization $STATUS"
             exit 1
           fi
-          xcrun stapler staple Sempre.app
+          # Stapling fetches the ticket from Apple's CloudKit, and the runner's connection to it sometimes
+          # drops ("The network connection was lost", error 68) even though notarization was accepted.
+          for attempt in 1 2 3 4 5; do
+            if xcrun stapler staple Sempre.app; then break; fi
+            if [ "$attempt" = 5 ]; then echo "::error::stapling failed 5 times"; exit 1; fi
+            echo "stapling failed (attempt $attempt of 5), retrying in 30s"
+            sleep 30
+          done
           xcrun stapler validate Sempre.app
 
       - name: Gatekeeper check
