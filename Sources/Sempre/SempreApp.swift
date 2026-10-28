@@ -109,6 +109,7 @@ struct ContentView: View {
                 Button("Import CSV…") { runImport() }
                 Button("Show Data File") { store.revealDataFile() }
                 Divider()
+                Text("Sempre \(Bundle.main.object(forInfoDictionaryKey: "CFBundleShortVersionString") as? String ?? "(development build)")")
                 Button(updater.status == .checking ? "Checking for Updates…"
                        : updater.status == .installing ? "Installing Update…" : "Check for Updates…") {
                     Task { await updater.check(userInitiated: true) }

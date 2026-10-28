@@ -197,6 +197,24 @@ struct UpdatesTests {
         #expect(throws: Updates.UpdateError.self) { try Updates.checkRunsHere(future) }
     }
 
+    @Test func perArchitectureMinimumWins() throws {
+        let app = try makeApp(in: tempDir(), minimumOS: "14.0")
+        let plist = app.appendingPathComponent("Contents/Info.plist")
+        var info = try #require(NSDictionary(contentsOf: plist) as? [String: Any])
+        info["LSMinimumSystemVersionByArchitecture"] = ["arm64": "99.0", "x86_64": "99.0"]
+        try PropertyListSerialization.data(fromPropertyList: info, format: .xml, options: 0).write(to: plist)
+        #expect(throws: Updates.UpdateError.self) {
+            try Updates.checkRunsHere(app, os: .init(majorVersion: 26, minorVersion: 0, patchVersion: 0))
+        }
+    }
+
+    @Test func appThatLostItsExecuteBitIsRefused() throws {
+        let app = try makeApp(in: tempDir())
+        try Updates.checkRunsHere(app)
+        try FileManager.default.setAttributes([.posixPermissions: 0o644], ofItemAtPath: app.appendingPathComponent("Contents/MacOS/Sempre").path)
+        #expect(throws: Updates.UpdateError.self) { try Updates.checkRunsHere(app) }
+    }
+
     @Test func zipWithoutTheAppIsRejected() throws {
         let dir = tempDir()
         let other = dir.appendingPathComponent("Other.txt")

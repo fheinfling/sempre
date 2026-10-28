@@ -119,6 +119,10 @@ final class Updater: ObservableObject {
     /// rename) and returns the unpacked app once it has passed every check. On failure the folder is removed.
     func downloadAndVerify(_ release: Updates.Release, from url: URL, satisfying requirement: SecRequirement,
                            nextTo app: URL, newerThan current: String) async throws -> URL {
+        // A release zip is ~2 MB; refuse anything that announces itself as far bigger before downloading it.
+        guard let size = release.size, size <= 100_000_000 else {
+            throw Updates.UpdateError(message: "The download is too large to be Sempre.")
+        }
         let dir = try FileManager.default.url(for: .itemReplacementDirectory, in: .userDomainMask, appropriateFor: app, create: true)
         do {
             let (file, response) = try await session.download(from: url)
@@ -126,7 +130,7 @@ final class Updater: ObservableObject {
             guard (response as? HTTPURLResponse)?.statusCode == 200 else {
                 throw Updates.UpdateError(message: "The download failed (\((response as? HTTPURLResponse)?.statusCode ?? 0)).")
             }
-            if let size = release.size, (try? file.resourceValues(forKeys: [.fileSizeKey]).fileSize) != size {
+            if (try? file.resourceValues(forKeys: [.fileSizeKey]).fileSize) != size {
                 throw Updates.UpdateError(message: "The download is incomplete.")
             }
             // Unzipping and hashing every architecture takes a moment; keep it off the main thread.

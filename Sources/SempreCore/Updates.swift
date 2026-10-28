@@ -120,19 +120,25 @@ public enum Updates {
     /// Checked before the swap, so an update that couldn't launch never replaces one that can.
     public static func checkRunsHere(_ app: URL, os: OperatingSystemVersion = ProcessInfo.processInfo.operatingSystemVersion) throws {
         guard let bundle = Bundle(url: app) else { throw UpdateError(message: "The download isn't an app.") }
-        if let minimum = bundle.object(forInfoDictionaryKey: "LSMinimumSystemVersion") as? String {
+        #if arch(arm64)
+        let (here, archName) = (NSBundleExecutableArchitectureARM64, "arm64")
+        #else
+        let (here, archName) = (NSBundleExecutableArchitectureX86_64, "x86_64")
+        #endif
+        // Launch Services lets a per-architecture minimum override the general one.
+        let perArch = bundle.object(forInfoDictionaryKey: "LSMinimumSystemVersionByArchitecture") as? [String: String]
+        if let minimum = perArch?[archName] ?? bundle.object(forInfoDictionaryKey: "LSMinimumSystemVersion") as? String {
             let p = minimum.split(separator: ".").map { Int($0) ?? 0 } + [0, 0, 0]
             guard (os.majorVersion, os.minorVersion, os.patchVersion) >= (p[0], p[1], p[2]) else {
                 throw UpdateError(message: "This version needs macOS \(minimum) or later.")
             }
         }
-        #if arch(arm64)
-        let here = NSBundleExecutableArchitectureARM64
-        #else
-        let here = NSBundleExecutableArchitectureX86_64
-        #endif
         guard bundle.executableArchitectures?.contains(NSNumber(value: here)) == true else {
             throw UpdateError(message: "This version doesn't run on this Mac's processor.")
+        }
+        // File permissions aren't part of the signature, so an intact app could still have lost its execute bit.
+        guard let executable = bundle.executablePath, FileManager.default.isExecutableFile(atPath: executable) else {
+            throw UpdateError(message: "The download's app can't be started.")
         }
     }
 
@@ -143,14 +149,15 @@ public enum Updates {
     /// afterwards Sempre.app has to be a real folder: a symlink would pass every check by pointing at a genuine
     /// app elsewhere in the archive, then dangle once it's moved into place.
     public static func unpack(zip: URL, into dir: URL, maxEntries: Int = 2000, maxBytes: Int = 200_000_000) throws -> URL {
-        let names = try zipinfo(["-1", zip.path]).split(separator: "\n").map(String.init)
-        guard !names.isEmpty, names.allSatisfy({ $0 == "Sempre.app/" || ($0.hasPrefix("Sempre.app/") && !$0.split(separator: "/").contains("..")) }) else {
-            throw UpdateError(message: "The download contains more than Sempre.app.")
-        }
+        // Totals first, so a zip with a huge number of entries is turned away before its listing is read.
         // "10 files, 5263719 bytes uncompressed, 2168572 bytes compressed:  58.8%"
         let totals = try zipinfo(["-t", zip.path]).split(separator: " ").compactMap { Int($0) }
         guard totals.count >= 2, totals[0] <= maxEntries, totals[1] <= maxBytes else {
             throw UpdateError(message: "The download is too large to be Sempre.")
+        }
+        let names = try zipinfo(["-1", zip.path]).split(separator: "\n").map(String.init)
+        guard !names.isEmpty, names.allSatisfy({ $0 == "Sempre.app/" || ($0.hasPrefix("Sempre.app/") && !$0.split(separator: "/").contains("..")) }) else {
+            throw UpdateError(message: "The download contains more than Sempre.app.")
         }
         let ditto = Process()
         ditto.executableURL = URL(fileURLWithPath: "/usr/bin/ditto")
