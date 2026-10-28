@@ -116,20 +116,67 @@ public enum Updates {
         Bundle(url: app)?.object(forInfoDictionaryKey: "CFBundleShortVersionString") as? String
     }
 
+    /// Throws unless the app can start on this Mac: its minimum macOS version and its processor architecture.
+    /// Checked before the swap, so an update that couldn't launch never replaces one that can.
+    public static func checkRunsHere(_ app: URL, os: OperatingSystemVersion = ProcessInfo.processInfo.operatingSystemVersion) throws {
+        guard let bundle = Bundle(url: app) else { throw UpdateError(message: "The download isn't an app.") }
+        if let minimum = bundle.object(forInfoDictionaryKey: "LSMinimumSystemVersion") as? String {
+            let p = minimum.split(separator: ".").map { Int($0) ?? 0 } + [0, 0, 0]
+            guard (os.majorVersion, os.minorVersion, os.patchVersion) >= (p[0], p[1], p[2]) else {
+                throw UpdateError(message: "This version needs macOS \(minimum) or later.")
+            }
+        }
+        #if arch(arm64)
+        let here = NSBundleExecutableArchitectureARM64
+        #else
+        let here = NSBundleExecutableArchitectureX86_64
+        #endif
+        guard bundle.executableArchitectures?.contains(NSNumber(value: here)) == true else {
+            throw UpdateError(message: "This version doesn't run on this Mac's processor.")
+        }
+    }
+
     // MARK: Installing
 
-    /// Unpacks a release zip into `dir` and returns the Sempre.app inside it.
-    public static func unpack(zip: URL, into dir: URL) throws -> URL {
+    /// Unpacks a release zip into `dir` and returns the Sempre.app inside it. Before anything is written the zip
+    /// has to hold nothing but Sempre.app and stay within a size budget (a release is ~10 entries, ~5 MB), and
+    /// afterwards Sempre.app has to be a real folder: a symlink would pass every check by pointing at a genuine
+    /// app elsewhere in the archive, then dangle once it's moved into place.
+    public static func unpack(zip: URL, into dir: URL, maxEntries: Int = 2000, maxBytes: Int = 200_000_000) throws -> URL {
+        let names = try zipinfo(["-1", zip.path]).split(separator: "\n").map(String.init)
+        guard !names.isEmpty, names.allSatisfy({ $0 == "Sempre.app/" || ($0.hasPrefix("Sempre.app/") && !$0.split(separator: "/").contains("..")) }) else {
+            throw UpdateError(message: "The download contains more than Sempre.app.")
+        }
+        // "10 files, 5263719 bytes uncompressed, 2168572 bytes compressed:  58.8%"
+        let totals = try zipinfo(["-t", zip.path]).split(separator: " ").compactMap { Int($0) }
+        guard totals.count >= 2, totals[0] <= maxEntries, totals[1] <= maxBytes else {
+            throw UpdateError(message: "The download is too large to be Sempre.")
+        }
         let ditto = Process()
         ditto.executableURL = URL(fileURLWithPath: "/usr/bin/ditto")
         ditto.arguments = ["-x", "-k", zip.path, dir.path]
         try ditto.run()
         ditto.waitUntilExit()
         let app = dir.appendingPathComponent("Sempre.app")
-        guard ditto.terminationStatus == 0, FileManager.default.fileExists(atPath: app.path) else {
+        let kind = try? app.resourceValues(forKeys: [.isSymbolicLinkKey, .isDirectoryKey])
+        guard ditto.terminationStatus == 0, kind?.isSymbolicLink == false, kind?.isDirectory == true else {
             throw UpdateError(message: "The download doesn't contain Sempre.app.")
         }
         return app
+    }
+
+    private static func zipinfo(_ args: [String]) throws -> String {
+        let p = Process()
+        p.executableURL = URL(fileURLWithPath: "/usr/bin/zipinfo")
+        p.arguments = args
+        let out = Pipe()
+        p.standardOutput = out
+        p.standardError = FileHandle.nullDevice
+        try p.run()
+        let data = out.fileHandleForReading.readDataToEndOfFile()
+        p.waitUntilExit()
+        guard p.terminationStatus == 0 else { throw UpdateError(message: "The download isn't a valid zip.") }
+        return String(decoding: data, as: UTF8.self)
     }
 
     /// Swaps `new` into the place of `current` in one step (both must be on the same volume) and returns

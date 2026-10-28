@@ -20,13 +20,15 @@ private func latestJSON(tag: String = "v1.2", draft: Bool = false, assets: Strin
 }
 
 /// A minimal app bundle, ad-hoc signed by `codesign` under `identifier`, or left unsigned.
-private func makeApp(in dir: URL, identifier: String? = "com.example.sempre-test", version: String = "1.2") throws -> URL {
+private func makeApp(in dir: URL, identifier: String? = "com.example.sempre-test", version: String = "1.2",
+                     minimumOS: String = "14.0") throws -> URL {
     let app = dir.appendingPathComponent("Sempre.app")
     let macOS = app.appendingPathComponent("Contents/MacOS")
     try FileManager.default.createDirectory(at: macOS, withIntermediateDirectories: true)
     try FileManager.default.copyItem(at: URL(fileURLWithPath: "/usr/bin/true"), to: macOS.appendingPathComponent("Sempre"))
     let plist: [String: Any] = ["CFBundleExecutable": "Sempre", "CFBundleIdentifier": identifier ?? "com.example.unsigned",
-                                "CFBundleShortVersionString": version, "CFBundlePackageType": "APPL"]
+                                "CFBundleShortVersionString": version, "CFBundlePackageType": "APPL",
+                                "LSMinimumSystemVersion": minimumOS]
     try PropertyListSerialization.data(fromPropertyList: plist, format: .xml, options: 0)
         .write(to: app.appendingPathComponent("Contents/Info.plist"))
     if let identifier {
@@ -155,6 +157,44 @@ struct UpdatesTests {
         let unpacked = try Updates.unpack(zip: zip, into: out)
         #expect(unpacked == out.appendingPathComponent("Sempre.app"))
         try Updates.verify(app: unpacked, satisfies: requirement(#"identifier "com.example.sempre-test""#), notarized: false)
+    }
+
+    @Test func symlinkedAppIsRejected() throws {
+        // A genuine app tucked away in the archive, with Sempre.app only a link to it.
+        let dir = tempDir()
+        let staging = dir.appendingPathComponent("staging")
+        _ = try makeApp(in: staging.appendingPathComponent("payload"))
+        try FileManager.default.createSymbolicLink(atPath: staging.appendingPathComponent("Sempre.app").path,
+                                                   withDestinationPath: "payload/Sempre.app")
+        let zip = dir.appendingPathComponent("evil.zip")
+        let p = Process()
+        p.executableURL = URL(fileURLWithPath: "/usr/bin/zip")
+        p.currentDirectoryURL = staging
+        p.arguments = ["-q", "-r", "-y", zip.path, "Sempre.app", "payload"]
+        try p.run()
+        p.waitUntilExit()
+        #expect(throws: Updates.UpdateError.self) { try Updates.unpack(zip: zip, into: dir.appendingPathComponent("out")) }
+    }
+
+    @Test func oversizedZipIsRejectedBeforeUnpacking() throws {
+        let dir = tempDir()
+        let app = try makeApp(in: dir.appendingPathComponent("source"))
+        let zip = dir.appendingPathComponent("Sempre-v1.2.zip")
+        try run("/usr/bin/ditto", "-c", "-k", "--keepParent", app.path, zip.path)
+        let out = dir.appendingPathComponent("out")
+        #expect(throws: Updates.UpdateError.self) { try Updates.unpack(zip: zip, into: out, maxBytes: 1000) }
+        #expect(throws: Updates.UpdateError.self) { try Updates.unpack(zip: zip, into: out, maxEntries: 2) }
+        #expect(!FileManager.default.fileExists(atPath: out.appendingPathComponent("Sempre.app").path))
+    }
+
+    @Test func refusesVersionsThatCantRunHere() throws {
+        let app = try makeApp(in: tempDir(), minimumOS: "14.0")
+        try Updates.checkRunsHere(app, os: .init(majorVersion: 14, minorVersion: 0, patchVersion: 0))
+        #expect(throws: Updates.UpdateError.self) {
+            try Updates.checkRunsHere(app, os: .init(majorVersion: 13, minorVersion: 6, patchVersion: 0))
+        }
+        let future = try makeApp(in: tempDir(), minimumOS: "99.0")
+        #expect(throws: Updates.UpdateError.self) { try Updates.checkRunsHere(future) }
     }
 
     @Test func zipWithoutTheAppIsRejected() throws {

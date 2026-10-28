@@ -74,7 +74,8 @@ enum DevCommands {
                 print("latest release: \(latest.version), \(latest.download?.absoluteString ?? "no Sempre zip attached")")
                 guard let url = latest.download else { exit(1) }
                 let app = try await updater.downloadAndVerify(latest, from: url, satisfying: requirement, nextTo: reference, newerThan: "0")
-                print("downloaded, notarized and signed like the reference: \(app.path)")
+                print("downloaded, notarized, signed like the reference and runs here: Sempre \(latest.version)")
+                try? FileManager.default.removeItem(at: app.deletingLastPathComponent())
                 exit(0)
             } catch {
                 print("error: \(error.localizedDescription)")

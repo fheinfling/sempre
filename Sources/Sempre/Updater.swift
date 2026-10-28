@@ -133,6 +133,7 @@ final class Updater: ObservableObject {
             let new = try await Task.detached {
                 let new = try Updates.unpack(zip: file, into: dir)
                 try Updates.verify(app: new, satisfies: requirement, notarized: true)
+                try Updates.checkRunsHere(new)
                 return new
             }.value
             guard let version = Updates.version(of: new), version == release.version, Updates.isNewer(version, than: current) else {
