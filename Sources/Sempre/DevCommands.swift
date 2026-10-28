@@ -3,10 +3,15 @@ import SempreCore
 
 /// Developer flags, handled before the app starts:
 /// - `Sempre --snapshot <dir> [--real]`: render the UI to PNGs (demo data, or the real data read-only)
+/// - `Sempre --update-check <Sempre.app>`: fetch the latest release, download it and run every check the updater
+///   runs, against the signature of the given (Developer ID signed) app. Installs nothing.
 enum DevCommands {
     @MainActor
     static func runIfRequested() {
         let args = CommandLine.arguments
+        if let i = args.firstIndex(of: "--update-check"), i + 1 < args.count {
+            updateCheck(against: URL(fileURLWithPath: args[i + 1]))
+        }
         guard let i = args.firstIndex(of: "--snapshot"), i + 1 < args.count else { return }
         let out = URL(fileURLWithPath: args[i + 1])
         // With --real, render the user's actual data (read-only); otherwise seed demo data.
@@ -34,8 +39,9 @@ enum DevCommands {
         let top = store.projects.first?.id
         shots.append(("ProjectYear", AnyView(StatsView(period: .year, projectID: top).frame(width: 320))))
         shots.append(("All", AnyView(StatsView(period: .all).frame(width: 320))))
+        let updater = Updater(automatic: false)
         for (name, shot) in shots {
-            let view = shot.environmentObject(store).background(Color(nsColor: .windowBackgroundColor))
+            let view = shot.environmentObject(store).environmentObject(updater).background(Color(nsColor: .windowBackgroundColor))
             for (suffix, look) in [("", NSAppearance.Name.aqua), ("-dark", .darkAqua)] {
                 try? windowImage(view, appearance: look)?.write(to: out.appendingPathComponent("\(name)\(suffix).png"))
             }
@@ -54,6 +60,30 @@ enum DevCommands {
         } }
         writeIconFrames(to: out)
         exit(0)
+    }
+
+    @MainActor
+    private static func updateCheck(against reference: URL) -> Never {
+        Task { @MainActor in
+            do {
+                guard let requirement = Updates.requirement(of: reference) else {
+                    throw Updates.UpdateError(message: "\(reference.path) isn't signed by a Developer ID team.")
+                }
+                let updater = Updater(automatic: false)
+                let latest = try await updater.fetchLatest()
+                print("latest release: \(latest.version), \(latest.download?.absoluteString ?? "no Sempre zip attached")")
+                guard let url = latest.download else { exit(1) }
+                let app = try await updater.downloadAndVerify(latest, from: url, satisfying: requirement, nextTo: reference, newerThan: "0")
+                print("downloaded, notarized, signed like the reference and runs here: Sempre \(latest.version)")
+                try? FileManager.default.removeItem(at: app.deletingLastPathComponent())
+                exit(0)
+            } catch {
+                print("error: \(error.localizedDescription)")
+                exit(1)
+            }
+        }
+        RunLoop.main.run()
+        exit(1)
     }
 
     /// Renders a view through an offscreen window rather than ImageRenderer, so AppKit-backed controls (menus) draw too.

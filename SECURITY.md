@@ -1,7 +1,9 @@
 # Security Policy
 
 Sempre is a menu bar time tracker. It keeps your projects and time entries in a JSON file in
-iCloud Drive (or locally) and never sends anything over the network. We take reports seriously.
+iCloud Drive (or locally). Its only network traffic is the update check: once a day (and when you choose
+Check for Updates…) it asks GitHub for the latest release, and on Update downloads that release's zip. It never
+sends your data anywhere. We take reports seriously.
 
 ## Reporting a vulnerability
 
@@ -17,6 +19,9 @@ We'll acknowledge within a few days and work with you on a fix and coordinated d
 In scope:
 - Exposure of tracked data: the data file (`iCloud Drive/Sempre/sempre.json`), temporary files, logs.
 - The CSV importer reading an untrusted or malformed file.
+- The updater: anything that gets it to install an app that isn't a notarized Sempre signed by the same Developer ID
+  team as the running one (it checks the download against the running app's own designated requirement), or to
+  run code from the download before those checks pass.
 - Data loss or corruption through sync between Macs.
 - The build and release scripts (`build.sh`, the GitHub workflows).
 

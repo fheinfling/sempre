@@ -10,6 +10,7 @@ struct SempreApp: App {
     private let store: Store
     private let ticker: MenuTicker
     private let chime: HourChime
+    private let updater: Updater
 
     init() {
         NSApplication.shared.setActivationPolicy(.accessory)
@@ -18,6 +19,7 @@ struct SempreApp: App {
         store = Store()
         ticker = MenuTicker(store: store)
         chime = HourChime(store: store)
+        updater = Updater()
     }
 
     var body: some Scene {
@@ -25,6 +27,7 @@ struct SempreApp: App {
             ContentView()
                 .environmentObject(store)
                 .environmentObject(chime)
+                .environmentObject(updater)
                 .modifier(FitsWindowToContent())
         } label: {
             MenuBarLabel(store: store, ticker: ticker)
@@ -43,6 +46,8 @@ struct ContentView: View {
     @AppStorage("menuBarTime") private var menuBarTime = MenuBarTime.timer
     @AppStorage("chimeStyle") private var chimeStyle = ChimeStyle.brassDust
     @EnvironmentObject var chime: HourChime
+    @EnvironmentObject var updater: Updater
+    @AppStorage(Updater.autoCheckKey) private var checkForUpdates = true
     @State private var openAtLogin = LoginItem.isEnabled
 
     init(initialTab: Tab = .track) {
@@ -103,6 +108,14 @@ struct ContentView: View {
                 Divider()
                 Button("Import CSV…") { runImport() }
                 Button("Show Data File") { store.revealDataFile() }
+                Divider()
+                Text("Sempre \(Bundle.main.object(forInfoDictionaryKey: "CFBundleShortVersionString") as? String ?? "(development build)")")
+                Button(updater.status == .checking ? "Checking for Updates…"
+                       : updater.status == .installing ? "Installing Update…" : "Check for Updates…") {
+                    Task { await updater.check(userInitiated: true) }
+                }
+                .disabled(updater.status != .idle)
+                Toggle("Check for Updates Automatically", isOn: $checkForUpdates)
                 Divider()
                 Button("Quit Sempre") { NSApp.terminate(nil) }
             } label: {
