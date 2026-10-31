@@ -5,12 +5,16 @@ import SempreCore
 /// - `Sempre --snapshot <dir> [--real]`: render the UI to PNGs (demo data, or the real data read-only)
 /// - `Sempre --update-check <Sempre.app>`: fetch the latest release, download it and run every check the updater
 ///   runs, against the signature of the given (Developer ID signed) app. Installs nothing.
+/// - `Sempre --agents [days]`: list the Claude Code and Codex sessions agent tracking would find (default: 7 days)
 enum DevCommands {
     @MainActor
     static func runIfRequested() {
         let args = CommandLine.arguments
         if let i = args.firstIndex(of: "--update-check"), i + 1 < args.count {
             updateCheck(against: URL(fileURLWithPath: args[i + 1]))
+        }
+        if let i = args.firstIndex(of: "--agents") {
+            listAgents(days: args.dropFirst(i + 1).first.flatMap(Double.init) ?? 7)
         }
         guard let i = args.firstIndex(of: "--snapshot"), i + 1 < args.count else { return }
         let out = URL(fileURLWithPath: args[i + 1])
@@ -34,14 +38,26 @@ enum DevCommands {
             if let e = store.running { store.updateEntry(e.id, start: Date().addingTimeInterval(-(72 * 60 + 18)), end: nil, subprojectID: nil) }
         }
 
-        var shots: [(String, AnyView)] = Tab.allCases.map { ($0.rawValue, AnyView(ContentView(initialTab: $0))) }
+        var shots: [(String, AnyView)] = [Tab.track, .stats].map { ($0.rawValue, AnyView(ContentView(initialTab: $0))) }
         shots.append(("Month", AnyView(StatsView(period: .month).frame(width: 320))))
         let top = store.projects.first?.id
         shots.append(("ProjectYear", AnyView(StatsView(period: .year, projectID: top).frame(width: 320))))
         shots.append(("All", AnyView(StatsView(period: .all).frame(width: 320))))
+        // Agent work only from real transcripts: there's no demo data for it.
+        let defaults = UserDefaults(suiteName: "sempre-snapshot-\(UUID())")!
+        defaults.set(real, forKey: AgentTracker.enabledKey)
+        let agents = AgentTracker(defaults: defaults)
+        if real {
+            let deadline = Date().addingTimeInterval(120)
+            while !agents.loaded && Date() < deadline { RunLoop.main.run(until: Date().addingTimeInterval(0.2)) }
+            shots.append(("Agents", AnyView(AgentsView().frame(width: 320))))
+            shots.append(("AgentsWeek", AnyView(AgentsView(period: .week).frame(width: 320))))
+            shots.append(("AgentsYear", AnyView(AgentsView(period: .year).frame(width: 320))))
+        }
         let updater = Updater(automatic: false)
         for (name, shot) in shots {
-            let view = shot.environmentObject(store).environmentObject(updater).background(Color(nsColor: .windowBackgroundColor))
+            let view = shot.environmentObject(store).environmentObject(updater).environmentObject(agents)
+                .background(Color(nsColor: .windowBackgroundColor))
             for (suffix, look) in [("", NSAppearance.Name.aqua), ("-dark", .darkAqua)] {
                 try? windowImage(view, appearance: look)?.write(to: out.appendingPathComponent("\(name)\(suffix).png"))
             }
@@ -84,6 +100,19 @@ enum DevCommands {
         }
         RunLoop.main.run()
         exit(1)
+    }
+
+    private static func listAgents(days: Double) -> Never {
+        let scanner = AgentScanner()
+        print("reading", scanner.roots.map(\.url.path).joined(separator: ", "))
+        let clock = Date()
+        let now = Date(), range = DateInterval(start: now.addingTimeInterval(-days * 86400), end: now)
+        let sessions = scanner.scan(since: range.start, now: now)
+        print("\(sessions.count) sessions in \(String(format: "%.1f", Date().timeIntervalSince(clock))) s")
+        for s in sessions where s.time(in: range) > 0 {
+            print([s.working ? "●" : " ", s.kind.rawValue, Fmt.short(s.time(in: range)), s.project, s.title].joined(separator: "  "))
+        }
+        exit(0)
     }
 
     /// Renders a view through an offscreen window rather than ImageRenderer, so AppKit-backed controls (menus) draw too.

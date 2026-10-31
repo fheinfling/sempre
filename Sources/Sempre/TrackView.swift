@@ -315,9 +315,11 @@ struct Segmented<T: Hashable>: View {
                             .shadow(color: .black.opacity(selection == o ? 0.12 : 0), radius: 1, y: 0.5)
                     )
                     .contentShape(Rectangle())
-                    .onTapGesture { withAnimation(.easeOut(duration: 0.15)) { selection = o } }
+                    .onTapGesture { selection = o }
             }
         }
+        // Only the switch itself animates: animating the content it swaps, while the panel resizes, makes it jump.
+        .animation(.easeOut(duration: 0.15), value: selection)
         .padding(2)
         .background(RoundedRectangle(cornerRadius: 8).fill(Color.primary.opacity(0.07)))
     }
