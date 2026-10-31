@@ -29,6 +29,7 @@ A small time tracker that lives in the macOS menu bar.
 - Edit, add or delete entries; add breaks as a length or an exact time
 - Syncs between Macs through iCloud Drive (`iCloud Drive/Sempre/sempre.json`)
 - Imports old entries from a CSV export of Toggl, Clockify, Harvest, Timing or most other time trackers
+- Optionally tracks what your coding agents (Claude Code, Codex) work on, and for how long
 - No third-party dependencies
 
 Requires macOS 14 or later (Apple Silicon or Intel).
@@ -55,7 +56,8 @@ CI runs it on every push and pull request and uploads it to Codecov.
 
 ## Structure
 
-- `Sources/SempreCore`: data model, storage and sync (`Store`), formatting, CSV import, update checks (`Updates`). No UI.
+- `Sources/SempreCore`: data model, storage and sync (`Store`), formatting, CSV import, update checks (`Updates`),
+  agent session logs (`AgentWork`). No UI.
 - `Sources/Sempre`: the menu bar app (SwiftUI), the animated menu bar icon and developer flags.
 - `Tests/SempreCoreTests`: tests for everything in `SempreCore`.
 - `Resources/AppIcon.icns`: the app icon, drawn by `scripts/make-icon.swift`; run `scripts/make-icon.sh` after changing it.
@@ -116,11 +118,34 @@ Columns are found by their header (case, spaces and punctuation don't matter; ot
 - A date with hours but no times (as Harvest exports) is laid out from 9:00, one entry after another.
 - Rows without a usable start and end (such as a running timer) are skipped and counted.
 
+## Agent work
+
+Menu `⋯` › Track Agent Work adds an Agents tab: how long Claude Code and Codex worked, per repository and session,
+and which of them are working right now. It's off by default.
+
+Sempre reads the session logs both agents already keep (`~/.claude/projects` and `~/.codex/sessions`, plus
+`$CLAUDE_CONFIG_DIR` and `$CODEX_HOME` when set). It only reads them, and it writes nothing to `sempre.json`.
+Only working time counts: an open session waiting for you adds nothing.
+- An agent is working from a prompt until it ends its turn. Ten minutes without any activity also ends it, so a long
+  build counts but a question left unanswered over lunch doesn't.
+- Subagents (Claude's background agents, Codex reviews) count towards the session that started them; overlapping
+  time counts once per session.
+- The project is the git repository the agent ran in; worktrees count as their main repository.
+- The title is the agent's own session title or thread name, or else the first prompt.
+
+Claude Code deletes its session logs after 30 days, so Sempre keeps its own record of every session (agent, repository,
+branch, title and working times) in `Sempre/Agents/<mac>.json` next to `sempre.json`. Each Mac writes its own file and
+reads the others', so with iCloud Drive you see the agent work of all your Macs. The first scan reads every log that's
+still there. The Agents tab shows a day, week, month or year, and ‹ › go back through the record.
+
+Agent time isn't tied to Sempre's projects yet.
+
 ## Developer flags
 
 - `Sempre --snapshot <dir> [--real]` renders the UI to PNGs (light and dark), with demo data or (read-only) your own.
   The README screenshots come from this too: the `screenshots` workflow renders them from demo data whenever
   the UI changes on `main` and publishes them to the `screenshots` branch.
+- `Sempre --agents [days]` lists the agent sessions of the last 7 (or `days`) days, as the Agents tab sees them.
 - `Sempre --update-check <Sempre.app>` fetches the latest release, downloads it and runs every check the updater runs,
   against the signature of the given (Developer ID signed) app. It installs nothing.
 
