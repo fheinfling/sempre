@@ -143,7 +143,8 @@ Only working time counts: an open session waiting for you adds nothing.
 Claude Code deletes its session logs after 30 days, so Sempre keeps its own record of every session (agent, repository,
 branch, title and working times) in `Sempre/Agents/<mac>.json` next to `sempre.json`. Each Mac writes its own file and
 reads the others', so with iCloud Drive you see the agent work of all your Macs. The first scan reads every log that's
-still there. The Agents tab shows a day, week, month or year, and ‹ › go back through the record.
+still there. The Agents tab shows a day, week, month, year or all of it, with how the time splits between Claude and
+Codex, and ‹ › go back through the record.
 
 Agent time isn't tied to Sempre's projects yet.
 

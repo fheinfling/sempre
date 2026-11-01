@@ -1,7 +1,7 @@
 import SwiftUI
 import SempreCore
 
-enum AgentPeriod: String, CaseIterable { case day = "Day", week = "Week", month = "Month", year = "Year" }
+enum AgentPeriod: String, CaseIterable { case day = "Day", week = "Week", month = "Month", year = "Year", all = "All" }
 
 extension AgentKind {
     var color: Color {
@@ -42,12 +42,16 @@ struct AgentsView: View {
         case .day: .day
         case .week: .weekOfYear
         case .month: .month
-        case .year: .year
+        case .year, .all: .year
         }
     }
 
     private func interval(now: Date) -> DateInterval {
         let cal = Calendar.current
+        if period == .all {
+            let first = agents.sessions.compactMap { $0.spans.first?.start }.min() ?? now
+            return DateInterval(start: cal.startOfDay(for: min(first, now)), end: cal.dateInterval(of: .day, for: now)!.end)
+        }
         return cal.dateInterval(of: component, for: cal.date(byAdding: component, value: offset, to: now)!)!
     }
 
@@ -60,6 +64,7 @@ struct AgentsView: View {
         case .week: return "\(iv.start.formatted(.dateTime.day().month(.abbreviated))) – \(end.formatted(.dateTime.day().month(.abbreviated).year()))"
         case .month: return iv.start.formatted(.dateTime.month(.wide).year())
         case .year: return iv.start.formatted(.dateTime.year())
+        case .all: return "Since \(iv.start.formatted(.dateTime.day().month(.abbreviated).year()))"
         }
     }
 
@@ -87,7 +92,9 @@ struct AgentsView: View {
 
             VStack(alignment: .leading, spacing: 0) {
                 HStack {
-                    Text(title(iv)).font(.caption).foregroundStyle(.secondary)
+                    Text(title(iv) + (timed.isEmpty ? "" : " · \(timed.count) \(timed.count == 1 ? "session" : "sessions")"))
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
                     Spacer()
                     HStack(spacing: 4) {
                         Button { offset -= 1 } label: { Image(systemName: "chevron.left") }
@@ -97,15 +104,16 @@ struct AgentsView: View {
                             .disabled(offset >= 0)
                     }
                     .buttonStyle(.borderless)
+                    // Hidden rather than removed for All, so nothing below moves.
+                    .opacity(period == .all ? 0 : 1)
+                    .disabled(period == .all)
                 }
                 Text(Fmt.short(total))
                     .font(.system(size: 28, weight: .semibold, design: .rounded))
                     .monospacedDigit()
-                // Always there (if empty), so the layout below doesn't move.
-                Text(timed.isEmpty ? " " : summary(sessions: timed.count, groups: groups))
-                    .font(.caption)
-                    .foregroundStyle(.secondary)
             }
+
+            KindSplit(times: AgentKind.allCases.map { kind in (kind, groups.reduce(0) { $0 + $1.time(of: kind) }) })
 
             if !working.isEmpty {
                 VStack(alignment: .leading, spacing: 2) {
@@ -163,14 +171,6 @@ struct AgentsView: View {
             .frame(maxWidth: .infinity, minHeight: Self.listHeight)
     }
 
-    private func summary(sessions: Int, groups: [Repo]) -> String {
-        let kinds = AgentKind.allCases.compactMap { kind -> String? in
-            let t = groups.reduce(0) { $0 + $1.time(of: kind) }
-            return t >= 60 ? "\(kind.rawValue) \(Fmt.short(t))" : nil
-        }
-        return (["\(sessions) \(sessions == 1 ? "session" : "sessions")"] + kinds).joined(separator: " · ")
-    }
-
     private func header(_ text: String) -> some View {
         Text(text)
             .font(.caption.weight(.medium))
@@ -216,6 +216,44 @@ struct AgentsView: View {
             if open { expanded.remove(group.id) } else { expanded.insert(group.id) }
         }
         .help("\(group.sessions.count) \(group.sessions.count == 1 ? "session" : "sessions")")
+    }
+}
+
+/// Claude vs Codex: a bar split by their shares of the period's agent time, with each one's time and share below.
+private struct KindSplit: View {
+    let times: [(kind: AgentKind, time: TimeInterval)]
+
+    var body: some View {
+        let total = times.reduce(0) { $0 + $1.time }
+        VStack(alignment: .leading, spacing: 6) {
+            GeometryReader { geo in
+                HStack(spacing: 2) {
+                    if total == 0 {
+                        Capsule().fill(.quaternary)
+                    } else {
+                        let shown = times.filter { $0.time > 0 }
+                        ForEach(shown, id: \.kind) { t in
+                            Capsule().fill(t.kind.color)
+                                .frame(width: (geo.size.width - CGFloat(shown.count - 1) * 2) * t.time / total)
+                        }
+                    }
+                }
+            }
+            .frame(height: 8)
+            HStack(spacing: 14) {
+                ForEach(times, id: \.kind) { t in
+                    HStack(spacing: 5) {
+                        Circle().fill(t.kind.color).frame(width: 7, height: 7)
+                        Text(t.kind.rawValue)
+                        Text(Fmt.short(t.time)).monospacedDigit().foregroundStyle(.secondary)
+                        if total > 0 {
+                            Text("\(Int((t.time / total * 100).rounded()))%").monospacedDigit().foregroundStyle(.tertiary)
+                        }
+                    }
+                }
+            }
+            .font(.caption)
+        }
     }
 }
 
