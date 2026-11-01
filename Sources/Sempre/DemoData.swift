@@ -1,10 +1,9 @@
-#if DEBUG
 import Foundation
 import SempreCore
 
-/// Made-up data for the screenshots (`Sempre --snapshot <dir>`, see `DevCommands`), which the `screenshots` workflow
-/// renders on a runner for the README. Nothing in the app uses it, and it's only compiled into debug builds, so the
-/// released app doesn't contain it. It's made up so the README never shows anyone's real projects or agent sessions.
+/// Made-up data for snapshots only (`Sempre --snapshot <dir>`, see `DevCommands`): the README screenshots, which the
+/// `screenshots` workflow renders on a runner, and CI's smoke test, which renders the release app with it. Nothing else
+/// uses it; the app itself never does. It's made up so screenshots never show anyone's real projects or agent sessions.
 enum DemoData {
     /// Four projects with five weeks of entries, and a timer running for 1:12.
     @MainActor
@@ -87,4 +86,3 @@ enum DemoData {
         return [.init(kind: .claude, url: root.appendingPathComponent("claude")), .init(kind: .codex, url: root.appendingPathComponent("codex"))]
     }
 }
-#endif

@@ -2,8 +2,7 @@ import SwiftUI
 import SempreCore
 
 /// Developer flags, handled before the app starts:
-/// - `Sempre --snapshot <dir> [--real]`: render the UI to PNGs (demo data from `DemoData`, debug builds only;
-///   or the real data, read-only)
+/// - `Sempre --snapshot <dir> [--real]`: render the UI to PNGs (made-up data from `DemoData`, or the real data read-only)
 /// - `Sempre --update-check <Sempre.app>`: fetch the latest release, download it and run every check the updater
 ///   runs, against the signature of the given (Developer ID signed) app. Installs nothing.
 /// - `Sempre --agents [days]`: list the Claude Code and Codex sessions agent tracking would find (default: 7 days)
@@ -27,14 +26,9 @@ enum DevCommands {
             store = Store()
             agentRoots = AgentScanner.defaultRoots()
         } else {
-            #if DEBUG
             store = Store(fileURL: FileManager.default.temporaryDirectory.appendingPathComponent("sempre-demo-\(UUID()).json"))
             DemoData.seed(store)
             agentRoots = DemoData.agentTranscripts()
-            #else
-            print("Demo data is only in debug builds (swift build); use --real to render your own data.")
-            exit(1)
-            #endif
         }
 
         var shots: [(String, AnyView)] = [Tab.track, .stats].map { ($0.rawValue, AnyView(ContentView(initialTab: $0))) }
