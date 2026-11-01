@@ -151,6 +151,8 @@ Agent time isn't tied to Sempre's projects yet.
 ## Developer flags
 
 - `Sempre --snapshot <dir> [--real]` renders the UI to PNGs (light and dark), with demo data or (read-only) your own.
+  The demo projects, entries and agent sessions are made up, live in `Sources/Sempre/DemoData.swift` and are only
+  compiled into debug builds (`swift build`); the released app doesn't contain them.
   The README screenshots come from this too: the `screenshots` workflow renders them from demo data whenever
   the UI changes on `main` and publishes them to the `screenshots` branch.
 - `Sempre --agents [days]` lists the agent sessions of the last 7 (or `days`) days, as the Agents tab sees them.
