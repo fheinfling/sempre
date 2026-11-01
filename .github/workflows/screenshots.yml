@@ -36,7 +36,7 @@ jobs:
           "$(swift build --show-bin-path)/Sempre" --snapshot "$SHOTS"
           SITE="$RUNNER_TEMP/site"
           mkdir -p "$SITE"
-          for view in Track Month; do
+          for view in Track Month Agents; do
             for look in "" -dark; do
               cp "$SHOTS/$view$look.png" "$SITE/$(echo "$view" | tr '[:upper:]' '[:lower:]')$look.png"
             done

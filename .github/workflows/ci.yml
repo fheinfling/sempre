@@ -60,7 +60,7 @@ jobs:
           OUT="$RUNNER_TEMP/snapshots"
           mkdir -p "$OUT"
           build/Sempre.app/Contents/MacOS/Sempre --snapshot "$OUT"
-          for shot in Track Track-dark Stats Stats-dark Month Month-dark ProjectYear All Icon; do
+          for shot in Track Track-dark Stats Stats-dark Month Month-dark ProjectYear All Agents Agents-dark Icon; do
             test -s "$OUT/$shot.png" || { echo "::error::missing snapshot $shot.png"; exit 1; }
           done
 

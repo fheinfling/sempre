@@ -2,9 +2,10 @@ import SwiftUI
 import SempreCore
 
 /// Developer flags, handled before the app starts:
-/// - `Sempre --snapshot <dir> [--real]`: render the UI to PNGs (demo data, or the real data read-only)
+/// - `Sempre --snapshot <dir> [--real]`: render the UI to PNGs (made-up data from `DemoData`, or the real data read-only)
 /// - `Sempre --update-check <Sempre.app>`: fetch the latest release, download it and run every check the updater
 ///   runs, against the signature of the given (Developer ID signed) app. Installs nothing.
+/// - `Sempre --agents [days]`: list the Claude Code and Codex sessions agent tracking would find (default: 7 days)
 enum DevCommands {
     @MainActor
     static func runIfRequested() {
@@ -12,36 +13,41 @@ enum DevCommands {
         if let i = args.firstIndex(of: "--update-check"), i + 1 < args.count {
             updateCheck(against: URL(fileURLWithPath: args[i + 1]))
         }
+        if let i = args.firstIndex(of: "--agents") {
+            listAgents(days: args.dropFirst(i + 1).first.flatMap(Double.init) ?? 7)
+        }
         guard let i = args.firstIndex(of: "--snapshot"), i + 1 < args.count else { return }
         let out = URL(fileURLWithPath: args[i + 1])
         // With --real, render the user's actual data (read-only); otherwise seed demo data.
         let real = args.contains("--real")
-        let file = FileManager.default.temporaryDirectory.appendingPathComponent("sempre-demo-\(UUID()).json")
-        let store = real ? Store() : Store(fileURL: file)
-        let names = ["Background App", "Client Website", "Admin", "Research"]
-        let cal = Calendar.current
-        if !real {
-            for (n, name) in names.enumerated() {
-                guard let p = store.addProject(name) else { continue }
-                for d in 0..<35 where (d + n) % 3 != 0 {
-                    let day = cal.date(byAdding: .day, value: -d, to: cal.startOfDay(for: Date()))!
-                    let start = day.addingTimeInterval(TimeInterval(8 + n * 2) * 3600)
-                    store.addEntry(projectID: p.id, subprojectID: nil, start: start, end: start.addingTimeInterval(TimeInterval(1800 + (d * 977 + n * 1300) % 7200)))
-                }
-            }
-            store.start(store.projects[0])
-            // Backdate the running timer so the Track shot shows it mid-session rather than at 0:00:00.
-            if let e = store.running { store.updateEntry(e.id, start: Date().addingTimeInterval(-(72 * 60 + 18)), end: nil, subprojectID: nil) }
+        let store: Store
+        let agentRoots: [AgentScanner.Root]
+        if real {
+            store = Store()
+            agentRoots = AgentScanner.defaultRoots()
+        } else {
+            store = Store(fileURL: FileManager.default.temporaryDirectory.appendingPathComponent("sempre-demo-\(UUID()).json"))
+            DemoData.seed(store)
+            agentRoots = DemoData.agentTranscripts()
         }
 
-        var shots: [(String, AnyView)] = Tab.allCases.map { ($0.rawValue, AnyView(ContentView(initialTab: $0))) }
+        var shots: [(String, AnyView)] = [Tab.track, .stats].map { ($0.rawValue, AnyView(ContentView(initialTab: $0))) }
         shots.append(("Month", AnyView(StatsView(period: .month).frame(width: 320))))
         let top = store.projects.first?.id
         shots.append(("ProjectYear", AnyView(StatsView(period: .year, projectID: top).frame(width: 320))))
         shots.append(("All", AnyView(StatsView(period: .all).frame(width: 320))))
+        // Agent work from the logs (read-only: no record is kept).
+        let defaults = UserDefaults(suiteName: "sempre-snapshot-\(UUID())")!
+        defaults.set(true, forKey: AgentTracker.enabledKey)
+        let agents = AgentTracker(scanner: AgentScanner(roots: agentRoots), defaults: defaults)
+        let deadline = Date().addingTimeInterval(120)
+        while !agents.loaded && Date() < deadline { RunLoop.main.run(until: Date().addingTimeInterval(0.2)) }
+        // Last week: the same picture whatever day this runs on.
+        shots.append(("Agents", AnyView(AgentsView(period: .week, offset: -1).frame(width: 320))))
         let updater = Updater(automatic: false)
         for (name, shot) in shots {
-            let view = shot.environmentObject(store).environmentObject(updater).background(Color(nsColor: .windowBackgroundColor))
+            let view = shot.environmentObject(store).environmentObject(updater).environmentObject(agents)
+                .background(Color(nsColor: .windowBackgroundColor))
             for (suffix, look) in [("", NSAppearance.Name.aqua), ("-dark", .darkAqua)] {
                 try? windowImage(view, appearance: look)?.write(to: out.appendingPathComponent("\(name)\(suffix).png"))
             }
@@ -84,6 +90,19 @@ enum DevCommands {
         }
         RunLoop.main.run()
         exit(1)
+    }
+
+    private static func listAgents(days: Double) -> Never {
+        let scanner = AgentScanner()
+        print("reading", scanner.roots.map(\.url.path).joined(separator: ", "))
+        let clock = Date()
+        let now = Date(), range = DateInterval(start: now.addingTimeInterval(-days * 86400), end: now)
+        let sessions = scanner.scan(since: range.start, now: now)
+        print("\(sessions.count) sessions in \(String(format: "%.1f", Date().timeIntervalSince(clock))) s")
+        for s in sessions where s.time(in: range) > 0 {
+            print([s.working ? "●" : " ", s.kind.rawValue, Fmt.short(s.time(in: range)), s.project, s.title].joined(separator: "  "))
+        }
+        exit(0)
     }
 
     /// Renders a view through an offscreen window rather than ImageRenderer, so AppKit-backed controls (menus) draw too.

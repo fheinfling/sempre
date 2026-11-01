@@ -315,7 +315,7 @@ struct Segmented<T: Hashable>: View {
                             .shadow(color: .black.opacity(selection == o ? 0.12 : 0), radius: 1, y: 0.5)
                     )
                     .contentShape(Rectangle())
-                    .onTapGesture { withAnimation(.easeOut(duration: 0.15)) { selection = o } }
+                    .onTapGesture { selection = o }
             }
         }
         .padding(2)

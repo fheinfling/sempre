@@ -5,6 +5,11 @@ iCloud Drive (or locally). Its only network traffic is the update check: once a 
 Check for Updates…) it asks GitHub for the latest release, and on Update downloads that release's zip. It never
 sends your data anywhere. We take reports seriously.
 
+With Track Agent Work turned on, it also reads the session logs of Claude Code (`~/.claude/projects`) and Codex
+(`~/.codex/sessions`). These hold prompts, code and tool output. Sempre only reads them, and keeps nothing from them
+except, per session, the agent, folder, repository, branch, title (the agent's own, or the first prompt, cut to 80
+characters) and working times, in `iCloud Drive/Sempre/Agents/<mac>.json`.
+
 ## Reporting a vulnerability
 
 **Please do not open a public issue for security problems.** Instead, use GitHub's private channel:
@@ -17,8 +22,11 @@ We'll acknowledge within a few days and work with you on a fix and coordinated d
 ## Scope
 
 In scope:
-- Exposure of tracked data: the data file (`iCloud Drive/Sempre/sempre.json`), temporary files, logs.
+- Exposure of tracked data: the data file (`iCloud Drive/Sempre/sempre.json`), the agent record
+  (`iCloud Drive/Sempre/Agents/`), temporary files, logs.
 - The CSV importer reading an untrusted or malformed file.
+- Agent tracking: a malformed agent session log, or anything from those logs ending up somewhere other than the
+  record described above.
 - The updater: anything that gets it to install an app that isn't a notarized Sempre signed by the same Developer ID
   team as the running one (it checks the download against the running app's own designated requirement), or to
   run code from the download before those checks pass.

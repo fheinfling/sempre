@@ -56,7 +56,8 @@ extension CSVImport {
 
 /// MenuBarExtra's window doesn't always follow its content's height (switching from Track to the
 /// taller Stats tab left it short, centring the panel and clipping its top and bottom).
-/// This sizes the window to the content itself, keeping its top edge under the menu bar.
+/// This sizes the window to the content itself, keeping its top edge under the menu bar. Until it has, the content
+/// stays at the top of the window rather than centred in it, so a height change doesn't shift it up and down.
 struct FitsWindowToContent: ViewModifier {
     @State private var window: NSWindow?
     @State private var height: CGFloat = 0
@@ -66,6 +67,7 @@ struct FitsWindowToContent: ViewModifier {
             .fixedSize(horizontal: false, vertical: true)
             .onGeometryChange(for: CGFloat.self) { $0.size.height } action: { height = $0; fit() }
             .background(WindowReader { window = $0; fit() })
+            .frame(maxHeight: .infinity, alignment: .top)
             // Reopening the panel can bring back a stale window size while the content's height is unchanged.
             .onReceive(NotificationCenter.default.publisher(for: NSWindow.didBecomeKeyNotification)) { note in
                 if note.object as? NSWindow === window { fit() }

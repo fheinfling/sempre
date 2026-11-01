@@ -11,6 +11,7 @@ struct SempreApp: App {
     private let ticker: MenuTicker
     private let chime: HourChime
     private let updater: Updater
+    private let agents: AgentTracker
 
     init() {
         NSApplication.shared.setActivationPolicy(.accessory)
@@ -20,6 +21,7 @@ struct SempreApp: App {
         ticker = MenuTicker(store: store)
         chime = HourChime(store: store)
         updater = Updater()
+        agents = AgentTracker(folder: store.fileURL.deletingLastPathComponent().appendingPathComponent("Agents"))
     }
 
     var body: some Scene {
@@ -28,6 +30,7 @@ struct SempreApp: App {
                 .environmentObject(store)
                 .environmentObject(chime)
                 .environmentObject(updater)
+                .environmentObject(agents)
                 .modifier(FitsWindowToContent())
         } label: {
             MenuBarLabel(store: store, ticker: ticker)
@@ -36,7 +39,7 @@ struct SempreApp: App {
     }
 }
 
-enum Tab: String, CaseIterable { case track = "Track", stats = "Stats" }
+enum Tab: String, CaseIterable { case track = "Track", stats = "Stats", agents = "Agents" }
 
 struct ContentView: View {
     @EnvironmentObject var store: Store
@@ -49,6 +52,8 @@ struct ContentView: View {
     @EnvironmentObject var updater: Updater
     @AppStorage(Updater.autoCheckKey) private var checkForUpdates = true
     @State private var openAtLogin = LoginItem.isEnabled
+    // The tracker itself isn't observed here: its updates would rebuild the panel (and close open menus).
+    @AppStorage(AgentTracker.enabledKey) private var trackAgents = false
 
     init(initialTab: Tab = .track) {
         _tab = State(initialValue: initialTab)
@@ -56,13 +61,15 @@ struct ContentView: View {
 
     var body: some View {
         VStack(spacing: 0) {
-            Segmented(options: Tab.allCases, selection: $tab) { $0.rawValue }
+            Segmented(options: Tab.allCases.filter { $0 != .agents || trackAgents }, selection: $tab) { $0.rawValue }
                 .padding(12)
+                .onChange(of: trackAgents) { if !trackAgents && tab == .agents { tab = .track } }
 
             Group {
                 switch tab {
                 case .track: TrackView()
                 case .stats: StatsView()
+                case .agents: AgentsView()
                 }
             }
 
@@ -101,6 +108,7 @@ struct ContentView: View {
                         ))
                     }
                 }
+                Toggle("Track Agent Work", isOn: $trackAgents)
                 Toggle("Open at Login", isOn: Binding(
                     get: { openAtLogin },
                     set: { LoginItem.set($0); openAtLogin = LoginItem.isEnabled }
