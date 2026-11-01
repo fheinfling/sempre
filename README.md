@@ -123,6 +123,13 @@ Columns are found by their header (case, spaces and punctuation don't matter; ot
 Menu `⋯` › Track Agent Work adds an Agents tab: how long Claude Code and Codex worked, per repository and session,
 and which of them are working right now. It's off by default.
 
+<p>
+  <picture>
+    <source media="(prefers-color-scheme: dark)" srcset="https://raw.githubusercontent.com/fheinfling/sempre/screenshots/agents-dark.png">
+    <img src="https://raw.githubusercontent.com/fheinfling/sempre/screenshots/agents.png" width="320" alt="Agents: a week of Claude Code and Codex work per repository, and the sessions working right now">
+  </picture>
+</p>
+
 Sempre reads the session logs both agents already keep (`~/.claude/projects` and `~/.codex/sessions`, plus
 `$CLAUDE_CONFIG_DIR` and `$CODEX_HOME` when set). It only reads them, and it writes nothing to `sempre.json`.
 Only working time counts: an open session waiting for you adds nothing.

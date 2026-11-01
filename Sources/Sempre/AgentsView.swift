@@ -24,8 +24,9 @@ struct AgentsView: View {
     private static let listHeight: CGFloat = 230
     private static let workingRows = 3
 
-    init(period: AgentPeriod = .day) {
+    init(period: AgentPeriod = .day, offset: Int = 0) {
         _period = State(initialValue: period)
+        _offset = State(initialValue: offset)
     }
 
     var body: some View {

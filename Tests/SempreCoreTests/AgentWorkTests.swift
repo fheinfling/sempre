@@ -22,6 +22,9 @@ struct AgentWorkTests {
         String(data: try! JSONSerialization.data(withJSONObject: s, options: .fragmentsAllowed), encoding: .utf8)!
     }
 
+    /// Span lengths in minutes; Doubles throughout, which older compilers can't infer from integer literals.
+    func minutes(_ spans: [DateInterval]) -> [Double] { spans.map { $0.duration / 60 } }
+
     func read(_ kind: AgentKind, _ lines: [String], id: String = "s") -> AgentLog {
         var log = AgentLog(kind: kind, sessionID: id)
         log.read(Data((lines.joined(separator: "\n") + "\n").utf8))
@@ -40,7 +43,7 @@ struct AgentWorkTests {
             claude("user", 25, text: "Thanks, now the tests"),
             claude("assistant", 27, stop: "end_turn"),
         ])
-        #expect(log.spans(now: t0.addingTimeInterval(3600)).map(\.duration) == [5 * 60, 2 * 60])
+        #expect(minutes(log.spans(now: t0.addingTimeInterval(3600))) == [5, 2])
         #expect(log.prompt == "Fix the build")
         #expect(log.cwd == "/tmp/proj")
         #expect(!log.isWorking(now: t0.addingTimeInterval(28 * 60)))
@@ -52,7 +55,7 @@ struct AgentWorkTests {
         log.add(t0.addingTimeInterval(9 * 60))   // a long tool run still counts
         log.add(t0.addingTimeInterval(30 * 60))  // waited on a question for 21 minutes: a new span
         log.add(t0.addingTimeInterval(31 * 60), endsTurn: true)
-        #expect(log.spans(now: t0.addingTimeInterval(3600)).map(\.duration) == [9 * 60, 60])
+        #expect(minutes(log.spans(now: t0.addingTimeInterval(3600))) == [9, 1])
     }
 
     @Test func anOpenTurnRunsUntilNowWhileTheAgentIsActive() {
@@ -61,11 +64,11 @@ struct AgentWorkTests {
         log.add(t0.addingTimeInterval(120))
         let soon = t0.addingTimeInterval(300)
         #expect(log.isWorking(now: soon))
-        #expect(log.spans(now: soon).map(\.duration) == [300])
+        #expect(minutes(log.spans(now: soon)) == [5])
         // Silent past the idle gap: it stopped (crashed, or is waiting) at its last activity.
         let later = t0.addingTimeInterval(3600)
         #expect(!log.isWorking(now: later))
-        #expect(log.spans(now: later).map(\.duration) == [120])
+        #expect(minutes(log.spans(now: later)) == [2])
     }
 
     // MARK: Claude Code
@@ -90,7 +93,7 @@ struct AgentWorkTests {
             claude("user", 3, text: "[Request interrupted by user]"),
         ])
         #expect(!log.isWorking(now: t0.addingTimeInterval(4 * 60)))
-        #expect(log.spans(now: t0.addingTimeInterval(4 * 60)).map(\.duration) == [3 * 60])
+        #expect(minutes(log.spans(now: t0.addingTimeInterval(4 * 60))) == [3])
     }
 
     @Test func claudePromptSkipsRemindersAndFlattensWhitespace() {
@@ -109,7 +112,7 @@ struct AgentWorkTests {
         #expect(log.isWorking(now: t0.addingTimeInterval(60)))
         data = Data((first + second + "\n").utf8)
         log.read(data)
-        #expect(log.spans(now: t0.addingTimeInterval(600)).map(\.duration) == [3 * 60])
+        #expect(minutes(log.spans(now: t0.addingTimeInterval(600))) == [3])
         #expect(!log.isWorking(now: t0.addingTimeInterval(600)))
     }
 
@@ -133,7 +136,7 @@ struct AgentWorkTests {
         #expect(log.cwd == "/w/repo-wt/fix")
         #expect(log.repository == "repo")
         #expect(log.prompt == "Make the tests pass")
-        #expect(log.spans(now: t0.addingTimeInterval(3600)).map(\.duration) == [12 * 60])
+        #expect(minutes(log.spans(now: t0.addingTimeInterval(3600))) == [12])
         #expect(!log.isSubagent)
     }
 
@@ -164,14 +167,14 @@ struct AgentWorkTests {
         #expect(sessions.count == 1)
         #expect(sessions[0].id == "claude:sess")
         #expect(sessions[0].title == "Plan it")
-        #expect(sessions[0].spans.map(\.duration) == [6 * 60])
+        #expect(minutes(sessions[0].spans) == [6])
 
         let h = try FileHandle(forWritingTo: main)
         try h.seekToEnd()
         try h.write(contentsOf: Data((claude("user", 20, text: "More") + "\n" + claude("assistant", 22, stop: "end_turn") + "\n").utf8))
         try h.close()
         sessions = scanner.scan(since: .distantPast, now: now)
-        #expect(sessions[0].spans.map(\.duration) == [6 * 60, 2 * 60])
+        #expect(minutes(sessions[0].spans) == [6, 2])
         #expect(sessions[0].time(in: DateInterval(start: t0.addingTimeInterval(21 * 60), end: now)) == 60)
     }
 
@@ -241,7 +244,8 @@ struct AgentWorkTests {
         #expect(live[0].working)
         #expect(live[0].spans.count == 2)
         let saved = AgentArchive(folder: folder, machineID: "mac-a").update(with: [], horizon: .distantFuture, now: t0)
-        #expect(saved.map { $0.spans.count } == [1])
+        #expect(saved.count == 1)
+        #expect(saved.first?.spans.count == 1)
         #expect(saved[0].working == false)
     }
 
