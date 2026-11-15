@@ -250,11 +250,14 @@ struct UpdatesTests {
             _ = try makeApp(in: staged.deletingLastPathComponent(), identifier: signer, version: update)
         }
 
-        /// An `open` stand-in: the "new app" either acknowledges itself, or never starts.
-        func opener(acknowledging version: String?) throws -> String {
+        /// An `open` stand-in: the "new app" acknowledges itself (from `app`, the target unless said otherwise),
+        /// or never starts; `also` runs after that, as the first time it's called.
+        func opener(acknowledging version: String?, from app: URL? = nil, also: String = "") throws -> String {
             let script = dir.appendingPathComponent("open.sh")
-            let body = version.map { "printf '%s\\n' '\($0)' > '\(ack.path)'" } ?? ":"
-            try "#!/bin/sh\n\(body)\n".write(to: script, atomically: true, encoding: .utf8)
+            let line = version.map { Updates.acknowledgement(version: $0, app: app ?? target) }
+            let body = line.map { "printf '%s' '\($0)' > '\(ack.path)'" } ?? ":"
+            let once = also.isEmpty ? "" : "[ -e '\(dir.path)/ran' ] || { touch '\(dir.path)/ran'; \(also); }"
+            try "#!/bin/sh\n\(body)\n\(once)\n".write(to: script, atomically: true, encoding: .utf8)
             try FileManager.default.setAttributes([.posixPermissions: 0o755], ofItemAtPath: script.path)
             return script.path
         }
@@ -295,6 +298,23 @@ struct UpdatesTests {
         let j = try Install()
         #expect(try j.run(opener: j.opener(acknowledging: "1.1")) == 4)
         #expect(Updates.version(of: j.target) == "1.1")
+    }
+
+    @Test func onlyTheInstalledCopyCanAcknowledge() throws {
+        // Another copy of the same version starting elsewhere doesn't prove the installed one started.
+        let i = try Install()
+        #expect(try i.run(opener: i.opener(acknowledging: "1.2", from: i.dir.appendingPathComponent("Elsewhere/Sempre.app"))) == 4)
+        #expect(Updates.version(of: i.target) == "1.1")
+        #expect(i.leftovers.isEmpty)
+    }
+
+    @Test func aVersionInstalledByHandDuringTheWaitStays() throws {
+        let i = try Install()
+        let other = try makeApp(in: i.dir.appendingPathComponent("manual"), version: "1.3")
+        let swap = "/bin/rm -rf '\(i.target.path)' && /usr/bin/ditto '\(other.path)' '\(i.target.path)'"
+        #expect(try i.run(opener: i.opener(acknowledging: nil, also: swap)) == 3)
+        #expect(Updates.version(of: i.target) == "1.3")
+        #expect(i.leftovers.isEmpty)
     }
 
     @Test func helperLeavesAnAppThatChangedMeanwhileAlone() throws {

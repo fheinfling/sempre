@@ -47,7 +47,7 @@ final class Updater: ObservableObject {
         UserDefaults.standard.register(defaults: [Self.autoCheckKey: true])
         guard automatic, let current else { return }
         // Tell an install helper that's waiting that this version came up: only then does it delete the old app.
-        Updates.acknowledge(Self.ackFile, version: current)
+        Updates.acknowledge(Self.ackFile, version: current, app: Bundle.main.bundleURL)
         var firstCheck: TimeInterval = 60
         if let pending = UserDefaults.standard.string(forKey: Self.pendingKey) {
             UserDefaults.standard.removeObject(forKey: Self.pendingKey)
@@ -92,6 +92,8 @@ final class Updater: ObservableObject {
             if userInitiated { inform("Couldn't check for updates", error.localizedDescription) }
             return
         }
+        // An install that started meanwhile keeps its release.
+        guard offer?.phase.isBusy != true else { return }
         guard Updates.isNewer(latest.version, than: current) else {
             offer = nil
             if userInitiated { inform("You're up to date", "Sempre \(current) is the latest version.") }
@@ -121,7 +123,8 @@ final class Updater: ObservableObject {
     /// The update line's Update (or Try Again): downloads and verifies the release, hands it to the install
     /// helper and quits; the helper reopens Sempre. Any problem shows in the line, with nothing changed.
     func install() async {
-        guard let offer, !offer.phase.isBusy, let current else { return }
+        // Not while a check runs: its answer could replace the release this would install.
+        guard let offer, !offer.phase.isBusy, !checking, let current else { return }
         let release = offer.release
         var staged: URL?
         do {

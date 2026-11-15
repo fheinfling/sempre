@@ -3,11 +3,14 @@ import Foundation
 /// Installing a verified update: a helper that outlives the app swaps the new version in once the app has quit,
 /// keeps the old one until the new one reports that it started, and puts the old one back if it doesn't.
 extension Updates {
-    /// Written by the app as it starts (its version and a newline), for a waiting helper.
-    public static func acknowledge(_ ack: URL, version: String) {
+    /// Written by the app as it starts, for a waiting helper: its version and where it runs from, so neither
+    /// another version nor another copy of the same one can stand in for the app the helper installed.
+    public static func acknowledge(_ ack: URL, version: String, app: URL) {
         try? FileManager.default.createDirectory(at: ack.deletingLastPathComponent(), withIntermediateDirectories: true)
-        try? Data("\(version)\n".utf8).write(to: ack, options: .atomic)
+        try? Data(acknowledgement(version: version, app: app).utf8).write(to: ack, options: .atomic)
     }
+
+    static func acknowledgement(version: String, app: URL) -> String { "\(version) \(app.standardizedFileURL.path)\n" }
 
     /// Runs detached with `/bin/sh` after the app quits. Every value arrives as a positional argument, never as
     /// script text. Exit codes: 0 installed and acknowledged; 1 nothing changed (the old app reopened); 2 the old
@@ -65,7 +68,7 @@ extension Updates {
     if "$opener" "$target"; then
       i=0
       while [ "$i" -lt "$ack_ticks" ]; do
-        if [ "$(/bin/cat -- "$ack" 2>/dev/null)" = "$new" ]; then
+        if [ "$(/bin/cat -- "$ack" 2>/dev/null)" = "$new $target" ]; then
           /bin/rm -rf -- "$backup"; cleanup; log "installed $new"; exit 0
         fi
         i=$((i + 1))
@@ -76,6 +79,12 @@ extension Updates {
       log "couldn't open the new app; rolling back"
     fi
 
+    # Only what this helper put there is taken back: a version installed by hand meanwhile stays.
+    now=$(version_of "$target")
+    if [ "$now" != "$new" ]; then
+      log "the installed app became '$now' meanwhile; leaving it"
+      /bin/rm -rf -- "$backup"; cleanup; exit 3
+    fi
     "$pkill" -f "$pattern"
     i=0
     while "$pgrep" -f "$pattern" >/dev/null 2>&1; do
@@ -102,8 +111,9 @@ extension Updates {
     /// Transactional: the helper copies `staged` to a hidden candidate next to `target`, checks the copy (its
     /// signature against `requirement`, and its version), and only then renames target → backup and
     /// candidate → target. It won't touch `target` unless that is still version `expected`. After opening the new
-    /// app it waits for `ack` (see `acknowledge`) to name the new version; only then is the backup deleted.
-    /// Otherwise it stops the new app, puts the backup back and reopens the old one. The tools and waits are
+    /// app it waits for `ack` (see `acknowledge`) to name the new version at `target`; only then is the backup
+    /// deleted. Otherwise it stops the new app, puts the backup back and reopens the old one, unless the app at
+    /// `target` has meanwhile become another version (installed by hand), which it leaves. The tools and waits are
     /// arguments for the tests.
     public static func installCommand(staged: URL, target: URL, pid: Int32, ack: URL, expected: String, requirement: String,
                                       opener: String = "/usr/bin/open", codesign: String = "/usr/bin/codesign",
@@ -111,6 +121,8 @@ extension Updates {
                                       quitWait: TimeInterval = 60, ackWait: TimeInterval = 120) throws -> [String] {
         func refuse(_ why: String) -> UpdateError { UpdateError(message: "Sempre can't update in place: \(why).") }
         let fm = FileManager.default
+        // The form the new app acknowledges itself with.
+        let target = target.standardizedFileURL
         let folder = target.deletingLastPathComponent()
         guard [staged, target, ack].allSatisfy({ $0.isFileURL && $0.path.hasPrefix("/") }) else { throw refuse("paths must be absolute") }
         guard target.pathExtension == "app" else { throw refuse("it isn't an app bundle") }

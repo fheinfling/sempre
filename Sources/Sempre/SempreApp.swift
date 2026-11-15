@@ -177,6 +177,7 @@ struct UpdateLine: View {
                 } else {
                     Button(failure(offer) == nil ? "Update" : "Try Again") { Task { await updater.install() } }
                         .controlSize(.small)
+                        .disabled(updater.checking)
                 }
             }
             .font(.caption)
