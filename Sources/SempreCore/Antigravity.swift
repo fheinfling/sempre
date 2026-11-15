@@ -10,7 +10,9 @@ extension AgentLog {
         static let done = 3, canceled = 6, interrupted = 12
     }
 
-    /// Reads a whole conversation. Every step records when it was created and, once finished, when it completed.
+    /// Reads a whole conversation. Every step records when it was created and, once finished, when it completed;
+    /// both are activity, as a transcript's lines are (a step's whole run isn't: a command can wait for approval).
+    /// Steps overlap (tools run side by side), so their activity is taken in time order rather than step order.
     /// A prompt starts a turn; a finished response without tool calls ends it, and so does cancelling.
     /// Steps change in place while they run (a response only gets its tool calls once it's generated), so a changed
     /// conversation is read again in full; they're small next to a transcript. Nil if it can't be read right now.
@@ -37,6 +39,8 @@ extension AgentLog {
             if let branch = ws?[4]?.string, !branch.isEmpty { log.branch = branch }
         }
 
+        struct Activity { var at: Date, startsTurn = false, endsTurn = false }
+        var activity: [Activity] = []
         // Payloads only where needed: a response's tool calls, and the prompt.
         let read = db.rows("""
             SELECT step_type, status, metadata, CASE WHEN step_type IN (14, 15) THEN step_payload END FROM steps ORDER BY idx
@@ -54,8 +58,12 @@ extension AgentLog {
             }
             // CortexStepPlannerResponse (payload 20): 7 tool calls.
             if type == Step.plannerResponse, status == Step.done, payload[20, 7] == nil { ends = true }
-            log.add(created, startsTurn: type == Step.userInput, endsTurn: ends && finished == nil)
-            if let finished { log.add(finished, endsTurn: ends) }
+            activity.append(Activity(at: created, startsTurn: type == Step.userInput, endsTurn: ends && finished == nil))
+            if let finished { activity.append(Activity(at: finished, endsTurn: ends)) }
+        }
+        // A stable sort: activity at the same moment stays in step order.
+        for a in activity.enumerated().sorted(by: { ($0.element.at, $0.offset) < ($1.element.at, $1.offset) }).map(\.element) {
+            log.add(a.at, startsTurn: a.startsTurn, endsTurn: a.endsTurn)
         }
         return read ? log : nil
     }
@@ -77,7 +85,7 @@ final class SQLiteReader {
 
     init?(_ url: URL) {
         guard sqlite3_open_v2(url.path, &db, SQLITE_OPEN_READONLY, nil) == SQLITE_OK else {
-            sqlite3_close(db)
+            // A failed open still allocates a handle; `deinit` closes it (and only it, once).
             return nil
         }
         sqlite3_busy_timeout(db, 500)

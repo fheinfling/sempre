@@ -22,10 +22,10 @@ struct AntigravityTests {
         return field(n, field(1, UInt64(t)) + field(2, UInt64((t - t.rounded(.down)) * 1e9)))
     }
 
-    struct Step { var type: Int, status: Int, metadata: [UInt8], payload: [UInt8] }
+    struct Step { var type: Int, status: Int, payload: [UInt8], metadata: [UInt8] }
 
     func step(_ type: Int, _ status: Int = 3, at created: Double, done: Double? = nil, payload: [UInt8] = []) -> Step {
-        Step(type: type, status: status, metadata: time(1, created) + (done.map { time(8, $0) } ?? []), payload: payload)
+        Step(type: type, status: status, payload: payload, metadata: time(1, created) + (done.map { time(8, $0) } ?? []))
     }
     func prompt(_ minutes: Double, _ text: String) -> Step { step(14, at: minutes, payload: field(19, field(2, text))) }
     func response(_ minutes: Double, done: Double? = nil, status: Int = 3, tools: Bool) -> Step {
@@ -92,6 +92,30 @@ struct AntigravityTests {
         #expect(log.branch == "fix")
         #expect(log.sessionID == "conv")
         #expect(!log.isSubagent)
+    }
+
+    @Test func activityIsTakenInTimeOrder() {
+        // Two tools side by side, the first an 11-minute build finishing after the second: in step order its end
+        // would come before the second's and look like a 10-minute silence followed by activity in the past.
+        let log = read([
+            prompt(0, "Build it"),
+            response(0.5, done: 1, tools: true),
+            tool(1, done: 12),
+            tool(1, done: 2),
+            response(12, done: 13, tools: false),
+        ])
+        #expect(minutes(log.spans(now: at(60))) == [13])
+    }
+
+    @Test func waitingForApprovalIsNotWork() {
+        // A command waits half an hour for the human to allow it (agy records no start of its own for that).
+        let log = read([
+            prompt(0, "Deploy"),
+            response(0.5, done: 1, tools: true),
+            tool(1, done: 31),
+            response(31, done: 32, tools: false),
+        ])
+        #expect(minutes(log.spans(now: at(60))) == [1, 1])
     }
 
     @Test func aResponseStillGeneratingKeepsTheTurnOpen() {
