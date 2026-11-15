@@ -1,11 +1,13 @@
+import CryptoKit
 import Foundation
 import Security
 
 /// Over-the-air updates from GitHub Releases: what the latest release is, whether a download is genuine,
-/// and swapping it in. The app's Updater does the networking, asking and relaunching.
+/// and the helper that swaps it in. The app's Updater does the networking and the handing over.
 ///
-/// Trust doesn't rest on GitHub alone: a new version is only installed if it's notarized and satisfies
-/// the running app's own designated requirement (same bundle identifier, same Developer ID team).
+/// The download has to match the SHA-256 GitHub publishes for the release's zip. That only proves it's the file
+/// the release names; trust doesn't rest on GitHub alone: a new version is only installed if it's notarized and
+/// satisfies the running app's own designated requirement (same bundle identifier, same Developer ID team).
 public enum Updates {
     /// A published release, as GitHub's `releases/latest` endpoint describes it (drafts and pre-releases never appear there).
     public struct Release: Equatable, Sendable {
@@ -16,13 +18,16 @@ public enum Updates {
         /// The `Sempre-v1.2.zip` asset, if the release has one.
         public var download: URL?
         public var size: Int?
+        /// The zip's SHA-256 as GitHub reports it, in lowercase hex.
+        public var sha256: String?
 
-        public init(version: String, notes: String, page: URL, download: URL? = nil, size: Int? = nil) {
+        public init(version: String, notes: String, page: URL, download: URL? = nil, size: Int? = nil, sha256: String? = nil) {
             self.version = version
             self.notes = notes
             self.page = page
             self.download = download
             self.size = size
+            self.sha256 = sha256
         }
     }
 
@@ -37,6 +42,8 @@ public enum Updates {
             let name: String
             let browser_download_url: URL
             let size: Int
+            /// "sha256:<hex>", which GitHub computes for every asset it stores.
+            let digest: String?
         }
         let tag_name: String
         let body: String?
@@ -55,8 +62,13 @@ public enum Updates {
         // The page gets opened as a fallback, so like the download it has to be a web address.
         guard r.html_url.scheme == "https" else { throw UpdateError(message: "GitHub's answer wasn't a release.") }
         let asset = r.assets.first { $0.name == "Sempre-\(r.tag_name).zip" && $0.browser_download_url.scheme == "https" }
+        let sha = asset?.digest.flatMap { d -> String? in
+            guard d.hasPrefix("sha256:") else { return nil }
+            let hex = d.dropFirst(7).lowercased()
+            return hex.count == 64 && hex.allSatisfy(\.isHexDigit) ? hex : nil
+        }
         return Release(version: strip(r.tag_name), notes: r.body ?? "", page: r.html_url,
-                       download: asset?.browser_download_url, size: asset?.size)
+                       download: asset?.browser_download_url, size: asset?.size, sha256: sha)
     }
 
     /// Compares dotted versions number by number ("1.10" is newer than "1.9"); a leading "v" is ignored.
@@ -69,19 +81,23 @@ public enum Updates {
         return false
     }
 
-    public enum Decision: Equatable, Sendable {
-        case upToDate
-        case available(Release)
-        /// Newer, but the user chose to skip this version.
-        case skipped(Release)
-    }
-
-    public static func decide(latest: Release, current: String, skipped: String?) -> Decision {
-        guard isNewer(latest.version, than: current) else { return .upToDate }
-        return skipped.map(strip) == latest.version ? .skipped(latest) : .available(latest)
-    }
-
     // MARK: Verifying a download
+
+    /// SHA-256 of a file in lowercase hex, read in chunks.
+    public static func sha256(of file: URL) throws -> String {
+        let handle = try FileHandle(forReadingFrom: file)
+        defer { try? handle.close() }
+        var hash = SHA256()
+        while let chunk = try handle.read(upToCount: 1 << 20), !chunk.isEmpty { hash.update(data: chunk) }
+        return hash.finalize().map { String(format: "%02x", $0) }.joined()
+    }
+
+    /// A requirement as text, for `codesign -R`.
+    public static func text(of requirement: SecRequirement) -> String? {
+        var text: CFString?
+        guard SecRequirementCopyString(requirement, [], &text) == errSecSuccess else { return nil }
+        return text as String?
+    }
 
     /// The requirement a new version has to meet: the designated requirement of the app at `app`.
     /// nil unless it's signed by a Developer ID team; ad-hoc and unsigned builds can't vouch for anything.
@@ -184,17 +200,6 @@ public enum Updates {
         p.waitUntilExit()
         guard p.terminationStatus == 0 else { throw UpdateError(message: "The download isn't a valid zip.") }
         return String(decoding: data, as: UTF8.self)
-    }
-
-    /// Swaps `new` into the place of `current` in one step (both must be on the same volume) and returns
-    /// where the old version ended up, next to the new one, for the caller to move to the Trash.
-    /// The old version gets a name nothing else has, so no existing file is ever overwritten.
-    @discardableResult
-    public static func replace(_ current: URL, with new: URL) throws -> URL {
-        let backupName = "Sempre (replaced \(UUID().uuidString.prefix(8))).app"
-        _ = try FileManager.default.replaceItemAt(current, withItemAt: new, backupItemName: backupName,
-                                                  options: .withoutDeletingBackupItem)
-        return current.deletingLastPathComponent().appendingPathComponent(backupName)
     }
 
     private static func staticCode(_ app: URL) -> SecStaticCode? {

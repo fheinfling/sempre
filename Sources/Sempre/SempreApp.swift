@@ -82,6 +82,11 @@ struct ContentView: View {
                     .frame(maxWidth: .infinity, alignment: .leading)
             }
 
+            if updater.offer != nil {
+                Divider()
+                UpdateLine()
+            }
+
             Divider()
             footer
         }
@@ -118,11 +123,10 @@ struct ContentView: View {
                 Button("Show Data File") { store.revealDataFile() }
                 Divider()
                 Text("Sempre \(Bundle.main.object(forInfoDictionaryKey: "CFBundleShortVersionString") as? String ?? "(development build)")")
-                Button(updater.status == .checking ? "Checking for Updates…"
-                       : updater.status == .installing ? "Installing Update…" : "Check for Updates…") {
+                Button(updater.checking ? "Checking for Updates…" : "Check for Updates…") {
                     Task { await updater.check(userInitiated: true) }
                 }
-                .disabled(updater.status != .idle)
+                .disabled(updater.checking || updater.offer?.phase.isBusy == true)
                 Toggle("Check for Updates Automatically", isOn: $checkForUpdates)
                 Divider()
                 Button("Quit Sempre") { NSApp.terminate(nil) }
@@ -148,6 +152,52 @@ struct ContentView: View {
                 + (result.skipped > 0 ? " Skipped \(result.skipped) rows without a start and end." : "")
         } catch {
             importMessage = "Import failed: \(error.localizedDescription)"
+        }
+    }
+}
+
+/// A newer version, as a line above the footer: ready (What's New, Update), on its way, or what went wrong (Try Again).
+/// Never a dialog: updating waits until it suits you.
+struct UpdateLine: View {
+    @EnvironmentObject var updater: Updater
+
+    var body: some View {
+        if let offer = updater.offer {
+            let v = offer.release.version
+            HStack(alignment: .firstTextBaseline, spacing: 8) {
+                Image(systemName: failure(offer) == nil ? "arrow.up.circle" : "exclamationmark.triangle")
+                    .foregroundStyle(failure(offer) == nil ? Color.accentColor : .orange)
+                Text(text(offer, v))
+                    .fixedSize(horizontal: false, vertical: true)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                Button("What's New") { updater.openReleasePage() }
+                    .buttonStyle(.link)
+                if offer.phase.isBusy {
+                    ProgressView().controlSize(.mini)
+                } else {
+                    Button(failure(offer) == nil ? "Update" : "Try Again") { Task { await updater.install() } }
+                        .controlSize(.small)
+                        .disabled(updater.checking)
+                }
+            }
+            .font(.caption)
+            .padding(.horizontal, 12)
+            .padding(.vertical, 8)
+        }
+    }
+
+    private func failure(_ offer: Updater.Offer) -> String? {
+        if case .failed(let why) = offer.phase { return why }
+        return nil
+    }
+
+    private func text(_ offer: Updater.Offer, _ v: String) -> String {
+        switch offer.phase {
+        case .available: "Sempre \(v) is ready"
+        case .downloading: "Downloading Sempre \(v)…"
+        case .verifying: "Checking Sempre \(v)…"
+        case .installing: "Installing Sempre \(v); it will reopen"
+        case .failed(let why): "Couldn't update to \(v): \(why)"
         }
     }
 }

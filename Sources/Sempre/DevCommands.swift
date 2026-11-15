@@ -44,6 +44,19 @@ enum DevCommands {
         while !agents.loaded && Date() < deadline { RunLoop.main.run(until: Date().addingTimeInterval(0.2)) }
         // Last week: the same picture whatever day this runs on.
         shots.append(("Agents", AnyView(AgentsView(period: .week, offset: -1).frame(width: 320))))
+        // The update line (shown above the footer) ready, on its way and failed.
+        let release = Updates.Release(version: "9.9", notes: "", page: URL(string: "https://github.com/fheinfling/sempre/releases")!)
+        let lines: [Updater] = [Updater.Phase.available, .downloading, .failed("The download is corrupted (its checksum doesn't match the release).")].map {
+            let u = Updater(automatic: false)
+            u.show(release, $0)
+            return u
+        }
+        shots.append(("Update", AnyView(VStack(spacing: 0) {
+            ForEach(lines.indices, id: \.self) { i in
+                UpdateLine().environmentObject(lines[i])
+                Divider()
+            }
+        }.frame(width: 320))))
         let updater = Updater(automatic: false)
         for (name, shot) in shots {
             let view = shot.environmentObject(store).environmentObject(updater).environmentObject(agents)
@@ -78,9 +91,9 @@ enum DevCommands {
                 let updater = Updater(automatic: false)
                 let latest = try await updater.fetchLatest()
                 print("latest release: \(latest.version), \(latest.download?.absoluteString ?? "no Sempre zip attached")")
-                guard let url = latest.download else { exit(1) }
-                let app = try await updater.downloadAndVerify(latest, from: url, satisfying: requirement, nextTo: reference, newerThan: "0")
-                print("downloaded, notarized, signed like the reference and runs here: Sempre \(latest.version)")
+                print("sha256: \(latest.sha256 ?? "none published")")
+                let app = try await updater.downloadAndVerify(latest, satisfying: requirement, newerThan: "0")
+                print("downloaded, checksum matches, notarized, signed like the reference and runs here: Sempre \(latest.version)")
                 try? FileManager.default.removeItem(at: app.deletingLastPathComponent())
                 exit(0)
             } catch {
