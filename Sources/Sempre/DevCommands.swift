@@ -5,7 +5,7 @@ import SempreCore
 /// - `Sempre --snapshot <dir> [--real]`: render the UI to PNGs (made-up data from `DemoData`, or the real data read-only)
 /// - `Sempre --update-check <Sempre.app>`: fetch the latest release, download it and run every check the updater
 ///   runs, against the signature of the given (Developer ID signed) app. Installs nothing.
-/// - `Sempre --agents [days]`: list the Claude Code and Codex sessions agent tracking would find (default: 7 days)
+/// - `Sempre --agents [days]`: list the Claude Code, Codex and Antigravity sessions agent tracking would find (default: 7 days)
 enum DevCommands {
     @MainActor
     static func runIfRequested() {
