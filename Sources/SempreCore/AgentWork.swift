@@ -3,11 +3,13 @@ import Combine
 import CryptoKit
 import IOKit
 
-/// Coding agents whose work Sempre can follow, from the session transcripts they write anyway:
-/// Claude Code (`~/.claude/projects/<folder>/<session>.jsonl`) and Codex (`~/.codex/sessions/YYYY/MM/DD/*.jsonl`).
+/// Coding agents whose work Sempre can follow, from the session logs they write anyway:
+/// Claude Code (`~/.claude/projects/<folder>/<session>.jsonl`), Codex (`~/.codex/sessions/YYYY/MM/DD/*.jsonl`) and
+/// the Antigravity CLI, `agy` (`~/.gemini/antigravity-cli/conversations/<conversation>.db`).
 public enum AgentKind: String, CaseIterable, Codable, Sendable {
     case claude = "Claude"
     case codex = "Codex"
+    case antigravity = "Antigravity"
 }
 
 /// One agent session: where it ran and when it was working.
@@ -76,7 +78,7 @@ public struct AgentLog {
     public var isSubagent = false
     public private(set) var spans: [DateInterval] = []
     private var open: (start: Date, last: Date)?
-    /// Bytes read so far, always just past a newline.
+    /// Bytes read so far, always just past a newline (transcripts only; conversation databases are read whole).
     var offset = 0
 
     public init(kind: AgentKind, sessionID: String) {
@@ -84,7 +86,9 @@ public struct AgentLog {
         self.sessionID = sessionID
     }
 
-    public mutating func add(_ t: Date, endsTurn: Bool = false) {
+    /// Activity at `t`. A new prompt (`startsTurn`) ends a turn still open at its last activity rather than at `t`.
+    public mutating func add(_ t: Date, startsTurn: Bool = false, endsTurn: Bool = false) {
+        if startsTurn { close() }
         if let o = open, t.timeIntervalSince(o.last) <= Self.idleGap {
             open = (o.start, max(o.last, t))
         } else {
@@ -128,6 +132,7 @@ public struct AgentLog {
         switch kind {
         case .claude: claudeLine(j, range)
         case .codex: codexLine(j, range)
+        case .antigravity: break // not a transcript: see `AgentLog.antigravity(at:)`
         }
     }
 
@@ -222,13 +227,15 @@ public final class AgentScanner: @unchecked Sendable {
     public let roots: [Root]
     private var files: [String: (log: AgentLog, size: Int, modified: Date)] = [:]
     private var projects: [String: String] = [:]
-    private var threadNames: [URL: (modified: Date, names: [String: String])] = [:]
+    /// Session names the agents keep apart from their logs, per file.
+    private var names: [URL: (modified: Date, names: [String: String])] = [:]
 
     public init(roots: [Root] = AgentScanner.defaultRoots()) {
         self.roots = roots
     }
 
-    /// `~/.claude/projects` and `~/.codex/sessions`, plus the folders `CLAUDE_CONFIG_DIR` and `CODEX_HOME` point to.
+    /// `~/.claude/projects`, `~/.codex/sessions` and `~/.gemini/antigravity-cli/conversations`, plus the folders
+    /// `CLAUDE_CONFIG_DIR` and `CODEX_HOME` point to.
     public static func defaultRoots() -> [Root] {
         let home = FileManager.default.homeDirectoryForCurrentUser
         let env = ProcessInfo.processInfo.environment
@@ -238,6 +245,7 @@ public final class AgentScanner: @unchecked Sendable {
         if let dir = env["CODEX_HOME"] { codex.append(URL(fileURLWithPath: dir)) }
         let all = claude.map { Root(kind: .claude, url: $0.appendingPathComponent("projects")) }
             + codex.map { Root(kind: .codex, url: $0.appendingPathComponent("sessions")) }
+            + [Root(kind: .antigravity, url: home.appendingPathComponent(".gemini/antigravity-cli/conversations"))]
         // Several of these can be links to the same folder.
         var seen = Set<String>()
         return all.compactMap { r in
@@ -251,9 +259,15 @@ public final class AgentScanner: @unchecked Sendable {
     public func scan(since: Date, now: Date = Date()) -> [AgentSession] {
         var seen = Set<String>()
         for root in roots {
-            for (url, size, modified) in transcripts(in: root.url) where modified >= since {
+            for (url, size, modified) in logs(in: root) where modified >= since {
                 seen.insert(url.path)
                 if let known = files[url.path], known.size == size, known.modified == modified { continue }
+                if root.kind == .antigravity {
+                    // Read whole; one that can't be read right now keeps what it had and is tried again next time.
+                    guard let log = AgentLog.antigravity(at: url) else { continue }
+                    files[url.path] = (log, size, modified)
+                    continue
+                }
                 var log = files[url.path].flatMap { $0.size <= size ? $0.log : nil }
                     ?? Self.log(for: url, kind: root.kind)
                 if let data = try? Data(contentsOf: url, options: .alwaysMapped) { log.read(data) }
@@ -272,7 +286,11 @@ public final class AgentScanner: @unchecked Sendable {
             let spans = Self.merge(logs.flatMap { $0.spans(now: now) })
             guard !spans.isEmpty, let first = logs.first else { return nil }
             let cwd = logs.lazy.compactMap(\.cwd).first ?? ""
-            let name = first.kind == .codex ? threadName(of: first.sessionID) : nil
+            let name = switch first.kind {
+            case .claude: String?.none
+            case .codex: threadName(of: first.sessionID)
+            case .antigravity: conversationTitle(of: first.sessionID)
+            }
             let title = name ?? logs.lazy.compactMap(\.title).first ?? logs.lazy.compactMap(\.prompt).first ?? "Untitled session"
             let project = logs.lazy.compactMap(\.repository).first ?? project(of: cwd)
             return AgentSession(id: id, kind: first.kind, cwd: cwd, project: project, branch: logs.lazy.compactMap(\.branch).first,
@@ -283,18 +301,32 @@ public final class AgentScanner: @unchecked Sendable {
     }
 
     /// Claude: `<folder>/<session>.jsonl`, with subagents in `<folder>/<session>/subagents/*.jsonl`.
-    /// Codex: `YYYY/MM/DD/rollout-….jsonl`.
-    private func transcripts(in root: URL) -> [(URL, Int, Date)] {
+    /// Codex: `YYYY/MM/DD/rollout-….jsonl`. Antigravity: `<conversation>.db`, with subagents in conversations of their own.
+    private func logs(in root: Root) -> [(URL, Int, Date)] {
         let keys: [URLResourceKey] = [.fileSizeKey, .contentModificationDateKey]
-        guard let e = FileManager.default.enumerator(at: root, includingPropertiesForKeys: keys,
+        guard let e = FileManager.default.enumerator(at: root.url, includingPropertiesForKeys: keys,
                                                      options: [.skipsHiddenFiles]) else { return [] }
+        let ext = root.kind == .antigravity ? "db" : "jsonl"
         var result: [(URL, Int, Date)] = []
-        for case let url as URL in e where url.pathExtension == "jsonl" {
-            guard let v = try? url.resourceValues(forKeys: Set(keys)), let size = v.fileSize, let mod = v.contentModificationDate else { continue }
+        for case let url as URL in e where url.pathExtension == ext {
+            guard var (size, mod) = Self.attributes(url) else { continue }
+            // A database takes in new rows in its write-ahead log first.
+            if root.kind == .antigravity, let (walSize, walMod) = Self.attributes(Self.wal(of: url)) {
+                size += walSize
+                mod = max(mod, walMod)
+            }
             result.append((url, size, mod))
         }
         return result
     }
+
+    private static func attributes(_ url: URL) -> (size: Int, modified: Date)? {
+        guard let v = try? url.resourceValues(forKeys: [.fileSizeKey, .contentModificationDateKey]),
+              let size = v.fileSize, let mod = v.contentModificationDate else { return nil }
+        return (size, mod)
+    }
+
+    private static func wal(of db: URL) -> URL { URL(fileURLWithPath: db.path + "-wal") }
 
     /// A new log named after its file; Codex names the session (and its parent) inside the file.
     static func log(for url: URL, kind: AgentKind) -> AgentLog {
@@ -351,17 +383,29 @@ public final class AgentScanner: @unchecked Sendable {
     private func threadName(of id: String) -> String? {
         for root in roots where root.kind == .codex {
             let index = root.url.deletingLastPathComponent().appendingPathComponent("session_index.jsonl")
-            guard let mod = (try? index.resourceValues(forKeys: [.contentModificationDateKey]))?.contentModificationDate else { continue }
-            if threadNames[index]?.modified != mod {
+            guard let mod = Self.attributes(index)?.modified else { continue }
+            if names[index]?.modified != mod {
                 var names: [String: String] = [:]
                 for line in ((try? String(contentsOf: index, encoding: .utf8)) ?? "").split(separator: "\n") {
                     guard let o = try? JSONSerialization.jsonObject(with: Data(line.utf8)) as? [String: Any],
                           let id = o["id"] as? String, let name = o["thread_name"] as? String else { continue }
                     names[id] = AgentLog.clean(name)
                 }
-                threadNames[index] = (mod, names)
+                self.names[index] = (mod, names)
             }
-            if let name = threadNames[index]?.names[id] { return name }
+            if let name = self.names[index]?.names[id] { return name }
+        }
+        return nil
+    }
+
+    /// Antigravity keeps the titles of its conversations in `conversation_summaries.db`, next to them.
+    private func conversationTitle(of id: String) -> String? {
+        for root in roots where root.kind == .antigravity {
+            let db = root.url.deletingLastPathComponent().appendingPathComponent("conversation_summaries.db")
+            guard let mod = Self.attributes(db)?.modified else { continue }
+            let modified = max(mod, Self.attributes(Self.wal(of: db))?.modified ?? mod)
+            if names[db]?.modified != modified { names[db] = (modified, AgentLog.antigravityTitles(db)) }
+            if let title = names[db]?.names[id] { return title }
         }
         return nil
     }
@@ -375,6 +419,12 @@ public final class AgentArchive: @unchecked Sendable {
     struct File: Codable {
         var machine: String
         var sessions: [AgentSession]
+    }
+
+    /// One session of a file that may not decode: a newer Sempre on another Mac may know agents this one doesn't.
+    private struct Readable: Decodable {
+        let session: AgentSession?
+        init(from decoder: Decoder) throws { session = try? AgentSession(from: decoder) }
     }
 
     public let folder: URL
@@ -466,7 +516,9 @@ public final class AgentArchive: @unchecked Sendable {
         guard let data = try? Data(contentsOf: url) else { return nil }
         let dec = JSONDecoder()
         dec.dateDecodingStrategy = .iso8601
-        return try? dec.decode(File.self, from: data)
+        // Skips the sessions it can't read rather than the whole file.
+        struct Lenient: Decodable { var machine: String; var sessions: [Readable] }
+        return (try? dec.decode(Lenient.self, from: data)).map { File(machine: $0.machine, sessions: $0.sessions.compactMap(\.session)) }
     }
 }
 

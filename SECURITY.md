@@ -5,8 +5,9 @@ iCloud Drive (or locally). Its only network traffic is the update check: once a 
 Check for Updates…) it asks GitHub for the latest release, and on Update downloads that release's zip. It never
 sends your data anywhere. We take reports seriously.
 
-With Track Agent Work turned on, it also reads the session logs of Claude Code (`~/.claude/projects`) and Codex
-(`~/.codex/sessions`). These hold prompts, code and tool output. Sempre only reads them, and keeps nothing from them
+With Track Agent Work turned on, it also reads the session logs of Claude Code (`~/.claude/projects`), Codex
+(`~/.codex/sessions`) and the Antigravity CLI (`~/.gemini/antigravity-cli`). These hold prompts, code and tool output.
+Antigravity's are SQLite databases, which Sempre opens read-only. Sempre only reads them, and keeps nothing from them
 except, per session, the agent, folder, repository, branch, title (the agent's own, or the first prompt, cut to 80
 characters) and working times, in `iCloud Drive/Sempre/Agents/<mac>.json`.
 

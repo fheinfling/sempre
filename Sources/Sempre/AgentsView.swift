@@ -8,11 +8,12 @@ extension AgentKind {
         switch self {
         case .claude: Color(red: 0.85, green: 0.47, blue: 0.34)
         case .codex: Color(red: 0.40, green: 0.62, blue: 0.85)
+        case .antigravity: Color(red: 0.36, green: 0.70, blue: 0.50)
         }
     }
 }
 
-/// What Claude Code and Codex worked on, and for how long, read from their session transcripts.
+/// What Claude Code, Codex and Antigravity worked on, and for how long, read from their session logs.
 /// Not tied to Sempre's projects (yet): an agent's "project" is the repository it ran in.
 struct AgentsView: View {
     @EnvironmentObject var agents: AgentTracker
@@ -113,7 +114,7 @@ struct AgentsView: View {
                     .monospacedDigit()
             }
 
-            KindSplit(times: AgentKind.allCases.map { kind in (kind, groups.reduce(0) { $0 + $1.time(of: kind) }) })
+            KindSplit(times: kinds.map { kind in (kind, groups.reduce(0) { $0 + $1.time(of: kind) }) })
 
             if !working.isEmpty {
                 VStack(alignment: .leading, spacing: 2) {
@@ -140,7 +141,7 @@ struct AgentsView: View {
                         placeholder {
                             VStack(spacing: 4) {
                                 Text("No agent work in this \(period == .day ? "day" : period.rawValue.lowercased())")
-                                Text("Sempre reads the session logs Claude Code and Codex keep in ~/.claude and ~/.codex.")
+                                Text("Sempre reads the session logs Claude Code, Codex and Antigravity keep in ~/.claude, ~/.codex and ~/.gemini.")
                                     .font(.caption)
                                     .foregroundStyle(.tertiary)
                                     .multilineTextAlignment(.center)
@@ -162,6 +163,12 @@ struct AgentsView: View {
         }
         .padding(.horizontal, 12)
         .padding(.bottom, 12)
+    }
+
+    /// The agents in the record (all of them before there is one), so an agent never used takes no room.
+    private var kinds: [AgentKind] {
+        let used = Set(agents.sessions.map(\.kind))
+        return used.isEmpty ? AgentKind.allCases : AgentKind.allCases.filter(used.contains)
     }
 
     private func placeholder(@ViewBuilder _ content: () -> some View) -> some View {
@@ -219,7 +226,7 @@ struct AgentsView: View {
     }
 }
 
-/// Claude vs Codex: a bar split by their shares of the period's agent time, with each one's time and share below.
+/// Claude vs Codex vs Antigravity: a bar split by their shares of the period's agent time, with each one's time and share below.
 private struct KindSplit: View {
     let times: [(kind: AgentKind, time: TimeInterval)]
 
@@ -240,19 +247,42 @@ private struct KindSplit: View {
                 }
             }
             .frame(height: 8)
-            HStack(spacing: 14) {
-                ForEach(times, id: \.kind) { t in
-                    HStack(spacing: 5) {
-                        Circle().fill(t.kind.color).frame(width: 7, height: 7)
-                        Text(t.kind.rawValue)
-                        Text(Fmt.short(t.time)).monospacedDigit().foregroundStyle(.secondary)
-                        if total > 0 {
-                            Text("\(Int((t.time / total * 100).rounded()))%").monospacedDigit().foregroundStyle(.tertiary)
+            // One line while it fits (two agents do), else each agent's time under its name.
+            ViewThatFits(in: .horizontal) {
+                HStack(spacing: 14) {
+                    ForEach(times, id: \.kind) { t in
+                        HStack(spacing: 5) {
+                            name(t.kind)
+                            amount(t.time, of: total)
+                        }
+                    }
+                }
+                HStack(alignment: .top, spacing: 14) {
+                    ForEach(times, id: \.kind) { t in
+                        VStack(alignment: .leading, spacing: 1) {
+                            name(t.kind)
+                            HStack(spacing: 5) { amount(t.time, of: total) }.padding(.leading, 12)
                         }
                     }
                 }
             }
             .font(.caption)
+            .lineLimit(1)
+        }
+    }
+
+    private func name(_ kind: AgentKind) -> some View {
+        HStack(spacing: 5) {
+            Circle().fill(kind.color).frame(width: 7, height: 7)
+            Text(kind.rawValue)
+        }
+    }
+
+    @ViewBuilder
+    private func amount(_ time: TimeInterval, of total: TimeInterval) -> some View {
+        Text(Fmt.short(time)).monospacedDigit().foregroundStyle(.secondary)
+        if total > 0 {
+            Text("\(Int((time / total * 100).rounded()))%").monospacedDigit().foregroundStyle(.tertiary)
         }
     }
 }
