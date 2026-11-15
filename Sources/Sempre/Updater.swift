@@ -1,67 +1,110 @@
 import AppKit
 import SempreCore
 
-/// Checks GitHub for a newer published release, asks, and installs it in place.
-/// Checks a minute after launch and then once a day (unless turned off), and on demand from the menu.
+/// Checks GitHub for a newer published release and installs it when asked.
+/// Checking is automatic and quiet: a minute after launch and then once a day (unless turned off), and on demand
+/// from the menu. A newer version shows as a line in the panel; downloading and installing only happen on its
+/// Update button. A helper swaps the app once it has quit and puts the old one back if the new one doesn't start.
 @MainActor
 final class Updater: ObservableObject {
     static let latestURL = URL(string: "https://api.github.com/repos/fheinfling/sempre/releases/latest")!
     static let autoCheckKey = "checkForUpdates"
-    private static let skippedKey = "skippedVersion"
     private static let lastCheckKey = "lastUpdateCheck"
+    /// The version handed to the install helper, until a launch shows whether it took.
+    private static let pendingKey = "installingUpdate"
 
-    enum Status { case idle, checking, installing }
-    @Published private(set) var status = Status.idle
+    enum Phase: Equatable {
+        case available, downloading, verifying, installing
+        case failed(String)
+
+        var isBusy: Bool { [.downloading, .verifying, .installing].contains(self) }
+    }
+
+    /// A newer version and how far installing it got; nil while there's none.
+    struct Offer: Equatable {
+        var release: Updates.Release
+        var phase: Phase
+    }
+
+    @Published private(set) var offer: Offer?
+    @Published private(set) var checking = false
     private var timer: Timer?
     private let session = URLSession(configuration: .ephemeral)
+    /// A version whose install didn't take: offered again as failed rather than as new.
+    private var failedVersion: String?
 
     /// nil when not running from a built app (e.g. `swift run`).
     private var current: String? { Updates.version(of: Bundle.main.bundleURL) }
 
-    /// `automatic: false` for developer commands: no scheduled checks, so nothing can install on its own.
+    /// Downloads, the helper's log and the file a new version acknowledges itself in: local, never in iCloud.
+    static let folder = FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask)[0]
+        .appendingPathComponent("Sempre/Updates")
+    static var ackFile: URL { folder.appendingPathComponent("update-ack") }
+    static var logFile: URL { folder.appendingPathComponent("update.log") }
+
+    /// `automatic: false` for developer commands: no scheduled checks, and nothing acknowledged.
     init(automatic: Bool = true) {
         UserDefaults.standard.register(defaults: [Self.autoCheckKey: true])
-        guard automatic, current != nil else { return }
+        guard automatic, let current else { return }
+        // Tell an install helper that's waiting that this version came up: only then does it delete the old app.
+        Updates.acknowledge(Self.ackFile, version: current)
+        var firstCheck: TimeInterval = 60
+        if let pending = UserDefaults.standard.string(forKey: Self.pendingKey) {
+            UserDefaults.standard.removeObject(forKey: Self.pendingKey)
+            if pending != current {
+                // The helper put this version back (or never got to swap): say so as soon as the release is known.
+                failedVersion = pending
+                firstCheck = 5
+            }
+        }
         // Hourly tick; the daily check only happens when a day has passed since the last one.
         timer = Timer.scheduledTimer(withTimeInterval: 3600, repeats: true) { [weak self] _ in
             MainActor.assumeIsolated { self?.checkIfDue() }
         }
-        DispatchQueue.main.asyncAfter(deadline: .now() + 60) { [weak self] in self?.checkIfDue() }
+        DispatchQueue.main.asyncAfter(deadline: .now() + firstCheck) { [weak self] in
+            if self?.failedVersion != nil { Task { await self?.check(userInitiated: false) } } else { self?.checkIfDue() }
+        }
     }
 
     private func checkIfDue() {
         let d = UserDefaults.standard
-        guard d.bool(forKey: Self.autoCheckKey), status == .idle else { return }
+        guard d.bool(forKey: Self.autoCheckKey) else { return }
         let last = d.object(forKey: Self.lastCheckKey) as? Date ?? .distantPast
         guard Date().timeIntervalSince(last) > 23 * 3600 else { return }
         Task { await check(userInitiated: false) }
     }
 
-    /// Asks GitHub for the latest release and offers it. Only a check the user asked for reports
-    /// "up to date" or errors, and offers a version they skipped before.
+    /// Asks GitHub for the latest release. A newer one becomes the panel's update line; only a check the user
+    /// asked for says "up to date" or reports an error. A failed check never forgets an update already known.
     func check(userInitiated: Bool) async {
-        guard status == .idle else { return }
+        guard !checking, offer?.phase.isBusy != true else { return }
         guard let current else {
             if userInitiated { inform("Can't check for updates", "This copy of Sempre wasn't built as an app, so it has no version to compare.") }
             return
         }
-        status = .checking
-        let decision: Updates.Decision
+        checking = true
+        defer { checking = false }
+        let latest: Updates.Release
         do {
-            let latest = try await fetchLatest()
+            latest = try await fetchLatest()
             UserDefaults.standard.set(Date(), forKey: Self.lastCheckKey)
-            decision = Updates.decide(latest: latest, current: current, skipped: UserDefaults.standard.string(forKey: Self.skippedKey))
         } catch {
-            status = .idle
             if userInitiated { inform("Couldn't check for updates", error.localizedDescription) }
             return
         }
-        status = .idle
-        switch decision {
-        case .available(let r): await offer(r, current: current)
-        case .skipped(let r): if userInitiated { await offer(r, current: current) }
-        case .upToDate: if userInitiated { inform("You're up to date", "Sempre \(current) is the latest version.") }
+        guard Updates.isNewer(latest.version, than: current) else {
+            offer = nil
+            if userInitiated { inform("You're up to date", "Sempre \(current) is the latest version.") }
+            return
         }
+        if let known = offer, known.release.version == latest.version {
+            offer?.release = latest
+        } else if failedVersion == latest.version {
+            offer = Offer(release: latest, phase: .failed("The update didn't finish, so Sempre \(current) is still installed (details in \(Self.logFile.path))."))
+        } else {
+            offer = Offer(release: latest, phase: .available)
+        }
+        failedVersion = nil
     }
 
     func fetchLatest() async throws -> Updates.Release {
@@ -75,55 +118,54 @@ final class Updater: ObservableObject {
         return try Updates.parseLatest(data)
     }
 
-    private func offer(_ release: Updates.Release, current: String) async {
-        let alert = NSAlert()
-        alert.messageText = "Sempre \(release.version) is available"
-        alert.informativeText = "You have \(current).\n\n" + Self.summary(release.notes)
-        alert.addButton(withTitle: "Update")
-        alert.addButton(withTitle: "Later")
-        alert.addButton(withTitle: "Skip This Version")
-        NSApp.activate(ignoringOtherApps: true)
-        switch alert.runModal() {
-        case .alertFirstButtonReturn: await install(release, current: current)
-        case .alertThirdButtonReturn: UserDefaults.standard.set(release.version, forKey: Self.skippedKey)
-        default: break
-        }
-    }
-
-    /// Downloads, verifies and swaps in the release, then relaunches. Where it can't install by itself
-    /// (development build, read-only or translocated location), it opens the release page instead.
-    private func install(_ release: Updates.Release, current: String) async {
-        let app = Bundle.main.bundleURL
-        guard status == .idle, let requirement = Updates.requirement(of: app), let download = release.download,
-              !app.path.contains("/AppTranslocation/"),
-              FileManager.default.isWritableFile(atPath: app.deletingLastPathComponent().path) else {
-            NSWorkspace.shared.open(release.page)
-            return
-        }
-        status = .installing
-        defer { status = .idle }
+    /// The update line's Update (or Try Again): downloads and verifies the release, hands it to the install
+    /// helper and quits; the helper reopens Sempre. Any problem shows in the line, with nothing changed.
+    func install() async {
+        guard let offer, !offer.phase.isBusy, let current else { return }
+        let release = offer.release
+        var staged: URL?
         do {
-            let new = try await downloadAndVerify(release, from: download, satisfying: requirement, nextTo: app, newerThan: current)
-            defer { try? FileManager.default.removeItem(at: new.deletingLastPathComponent()) }
-            let old = try Updates.replace(app, with: new)
-            try? FileManager.default.trashItem(at: old, resultingItemURL: nil)
+            // Whether this copy can be replaced in place, before downloading anything.
+            let app = Bundle.main.bundleURL
+            guard app.pathExtension == "app", let requirement = Updates.requirement(of: app),
+                  let requirementText = Updates.text(of: requirement) else {
+                throw Updates.UpdateError(message: "This copy of Sempre isn't a signed app; download the update from its release page.")
+            }
+            guard !app.path.contains("/AppTranslocation/") else {
+                throw Updates.UpdateError(message: "macOS is running Sempre from a temporary location; move it to Applications first.")
+            }
+            guard FileManager.default.isWritableFile(atPath: app.deletingLastPathComponent().path) else {
+                throw Updates.UpdateError(message: "Sempre can't replace itself in \(app.deletingLastPathComponent().path); download the update from its release page.")
+            }
+            self.offer?.phase = .downloading
+            let new = try await downloadAndVerify(release, satisfying: requirement, newerThan: current)
+            staged = new
+            self.offer?.phase = .installing
+            try startHelper(Updates.installCommand(staged: new, target: app, pid: ProcessInfo.processInfo.processIdentifier,
+                                                   ack: Self.ackFile, expected: current, requirement: requirementText))
+            UserDefaults.standard.set(release.version, forKey: Self.pendingKey)
+            // The helper waits for this process to exit, swaps the app and reopens it.
+            NSApp.terminate(nil)
         } catch {
-            inform("Couldn't install Sempre \(release.version)", error.localizedDescription + "\n\nYou can download it from the release page instead.")
-            NSWorkspace.shared.open(release.page)
-            return
+            // Once the helper runs it owns the download; before that, it goes.
+            if let staged { try? FileManager.default.removeItem(at: staged.deletingLastPathComponent()) }
+            self.offer?.phase = .failed(error.localizedDescription)
         }
-        relaunch(app, version: release.version)
     }
 
-    /// Downloads the release zip into a fresh folder on the same volume as `app` (so the swap is a single
-    /// rename) and returns the unpacked app once it has passed every check. On failure the folder is removed.
-    func downloadAndVerify(_ release: Updates.Release, from url: URL, satisfying requirement: SecRequirement,
-                           nextTo app: URL, newerThan current: String) async throws -> URL {
-        // A release zip is ~2 MB; refuse anything that announces itself as far bigger before downloading it.
+    /// Downloads the release zip into a fresh folder of its own and returns the unpacked app once it has passed
+    /// every check: size and checksum, notarization and signature, version, and whether it runs here.
+    /// On failure the folder is removed.
+    func downloadAndVerify(_ release: Updates.Release, satisfying requirement: SecRequirement, newerThan current: String) async throws -> URL {
+        guard let url = release.download, let sha256 = release.sha256 else {
+            throw Updates.UpdateError(message: "This release has no download Sempre can check.")
+        }
+        // A release zip is ~3 MB; refuse anything that announces itself as far bigger before downloading it.
         guard let size = release.size, size <= 100_000_000 else {
             throw Updates.UpdateError(message: "The download is too large to be Sempre.")
         }
-        let dir = try FileManager.default.url(for: .itemReplacementDirectory, in: .userDomainMask, appropriateFor: app, create: true)
+        let dir = Self.folder.appendingPathComponent(UUID().uuidString)
+        try FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true, attributes: [.posixPermissions: 0o700])
         do {
             let (file, response) = try await session.download(from: url)
             defer { try? FileManager.default.removeItem(at: file) }
@@ -133,8 +175,12 @@ final class Updater: ObservableObject {
             if (try? file.resourceValues(forKeys: [.fileSizeKey]).fileSize) != size {
                 throw Updates.UpdateError(message: "The download is incomplete.")
             }
-            // Unzipping and hashing every architecture takes a moment; keep it off the main thread.
+            offer?.phase = .verifying
+            // Hashing, unzipping and checking every architecture take a moment; keep them off the main thread.
             let new = try await Task.detached {
+                guard try Updates.sha256(of: file) == sha256 else {
+                    throw Updates.UpdateError(message: "The download is corrupted (its checksum doesn't match the release).")
+                }
                 let new = try Updates.unpack(zip: file, into: dir)
                 try Updates.verify(app: new, satisfies: requirement, notarized: true)
                 try Updates.checkRunsHere(new)
@@ -150,19 +196,24 @@ final class Updater: ObservableObject {
         }
     }
 
-    /// Starts the new version once this one has quit. The path goes to the shell as an argument, never as code.
-    /// If that can't be started, Sempre keeps running and says so rather than quitting with nothing to replace it.
-    private func relaunch(_ app: URL, version: String) {
-        let pid = ProcessInfo.processInfo.processIdentifier
-        let shell = Process()
-        shell.executableURL = URL(fileURLWithPath: "/bin/sh")
-        shell.arguments = ["-c", "while /bin/kill -0 \(pid) 2>/dev/null; do /bin/sleep 0.2; done; /usr/bin/open \"$0\"", app.path]
-        do {
-            try shell.run()
-            NSApp.terminate(nil)
-        } catch {
-            inform("Sempre \(version) is installed", "Quit Sempre and open it again to start the new version.")
-        }
+    /// Starts the helper, which outlives Sempre; what it says goes to the update log, so a failed restore isn't silent.
+    private func startHelper(_ arguments: [String]) throws {
+        let fm = FileManager.default
+        if !fm.fileExists(atPath: Self.logFile.path) { fm.createFile(atPath: Self.logFile.path, contents: nil) }
+        let log = try FileHandle(forWritingTo: Self.logFile)
+        try log.seekToEnd()
+        let helper = Process()
+        helper.executableURL = URL(fileURLWithPath: "/bin/sh")
+        helper.arguments = arguments
+        helper.standardInput = FileHandle.nullDevice
+        helper.standardOutput = log
+        helper.standardError = log
+        try helper.run()
+        try? log.close()
+    }
+
+    func openReleasePage() {
+        if let page = offer?.release.page { NSWorkspace.shared.open(page) }
     }
 
     private func inform(_ title: String, _ text: String) {
@@ -173,12 +224,6 @@ final class Updater: ObservableObject {
         alert.runModal()
     }
 
-    /// Release notes as plain text, short enough for an alert.
-    static func summary(_ notes: String) -> String {
-        let lines = notes.split(separator: "\n").map { $0.trimmingCharacters(in: .whitespaces) }
-            .filter { !$0.isEmpty && !$0.hasPrefix("**Full Changelog**") }
-            .map { $0.replacingOccurrences(of: #"^#+\s*"#, with: "", options: .regularExpression) }
-        let text = lines.prefix(12).joined(separator: "\n")
-        return text.count > 600 ? String(text.prefix(600)) + "…" : text
-    }
+    /// For snapshots: an update line in the given phase.
+    func show(_ release: Updates.Release, _ phase: Phase) { offer = Offer(release: release, phase: phase) }
 }

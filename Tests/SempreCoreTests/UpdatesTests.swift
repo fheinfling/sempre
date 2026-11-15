@@ -3,14 +3,11 @@ import Security
 import Testing
 @testable import SempreCore
 
-private func release(_ version: String) -> Updates.Release {
-    .init(version: version, notes: "", page: URL(string: "https://example.com/\(version)")!)
-}
-
 /// GitHub's `releases/latest` answer, trimmed to the fields Sempre reads.
 private func latestJSON(tag: String = "v1.2", draft: Bool = false, assets: String? = nil) -> Data {
     let assets = assets ?? """
-        [{"name": "Sempre-\(tag).zip", "browser_download_url": "https://github.com/fheinfling/sempre/releases/download/\(tag)/Sempre-\(tag).zip", "size": 2063619},
+        [{"name": "Sempre-\(tag).zip", "browser_download_url": "https://github.com/fheinfling/sempre/releases/download/\(tag)/Sempre-\(tag).zip", "size": 2063619,
+          "digest": "sha256:645EC31BA6476614B560C41757C9D76B4A28205C58C9AD577BDAB549740A3AE8"},
          {"name": "notes.txt", "browser_download_url": "https://example.com/notes.txt", "size": 10}]
         """
     return Data("""
@@ -72,6 +69,20 @@ struct UpdatesTests {
         #expect(r.page.absoluteString == "https://github.com/fheinfling/sempre/releases/tag/v1.2")
         #expect(r.download?.lastPathComponent == "Sempre-v1.2.zip")
         #expect(r.size == 2063619)
+        #expect(r.sha256 == "645ec31ba6476614b560c41757c9d76b4a28205c58c9ad577bdab549740a3ae8")
+    }
+
+    @Test func onlyASHA256DigestCounts() throws {
+        for digest in ["\"sha512:\(String(repeating: "a", count: 64))\"", "\"sha256:xyz\"", "null"] {
+            let r = try Updates.parseLatest(latestJSON(assets: #"[{"name": "Sempre-v1.2.zip", "browser_download_url": "https://example.com/Sempre-v1.2.zip", "size": 1, "digest": "# + digest + "}]"))
+            #expect(r.sha256 == nil, "\(digest)")
+        }
+    }
+
+    @Test func hashesFiles() throws {
+        let file = tempDir().appendingPathComponent("abc")
+        try Data("abc".utf8).write(to: file)
+        #expect(try Updates.sha256(of: file) == "ba7816bf8f01cfea414140de5dae2223b00361a396177a9cb410ff61f20015ad")
     }
 
     @Test func releaseWithoutTheZipStillReportsTheVersion() throws {
@@ -94,15 +105,6 @@ struct UpdatesTests {
     @Test func draftsAndNonsenseAreRejected() {
         #expect(throws: Updates.UpdateError.self) { try Updates.parseLatest(latestJSON(draft: true)) }
         #expect(throws: Updates.UpdateError.self) { try Updates.parseLatest(Data(#"{"message": "Not Found"}"#.utf8)) }
-    }
-
-    @Test func decidesWhatToOffer() {
-        #expect(Updates.decide(latest: release("1.2"), current: "1.1", skipped: nil) == .available(release("1.2")))
-        #expect(Updates.decide(latest: release("1.1"), current: "1.1", skipped: nil) == .upToDate)
-        #expect(Updates.decide(latest: release("1.0"), current: "1.1", skipped: nil) == .upToDate)
-        #expect(Updates.decide(latest: release("1.2"), current: "1.1", skipped: "1.2") == .skipped(release("1.2")))
-        // Skipping 1.2 doesn't hide 1.3.
-        #expect(Updates.decide(latest: release("1.3"), current: "1.1", skipped: "1.2") == .available(release("1.3")))
     }
 
     @Test func acceptsAnIntactAppThatMeetsTheRequirement() throws {
@@ -224,28 +226,108 @@ struct UpdatesTests {
         #expect(throws: Updates.UpdateError.self) { try Updates.unpack(zip: zip, into: dir.appendingPathComponent("out")) }
     }
 
-    @Test func swapsTheNewVersionIntoPlace() throws {
-        let dir = tempDir()
-        let current = try makeApp(in: dir.appendingPathComponent("Applications"), version: "1.1")
-        let new = try makeApp(in: dir.appendingPathComponent("download"), version: "1.2")
-        let old = try Updates.replace(current, with: new)
-        #expect(Updates.version(of: current) == "1.2")
-        #expect(Updates.version(of: old) == "1.1")
-        #expect(old.deletingLastPathComponent() == current.deletingLastPathComponent())
-        #expect(!FileManager.default.fileExists(atPath: new.path))
+    // MARK: Install helper
+
+    /// An installed 1.1 and a downloaded update, as the app hands them to the helper.
+    struct Install {
+        let dir = tempDir("install")
+        var target: URL { dir.appendingPathComponent("Applications/Sempre.app") }
+        var staged: URL { dir.appendingPathComponent("Updates/stage/Sempre.app") }
+        var ack: URL { dir.appendingPathComponent("Updates/update-ack") }
+        var folder: URL { target.deletingLastPathComponent() }
+
+        /// A process that has already exited, standing in for the app that quit.
+        let pid: Int32 = {
+            let p = Process()
+            p.executableURL = URL(fileURLWithPath: "/usr/bin/true")
+            try! p.run()
+            p.waitUntilExit()
+            return p.processIdentifier
+        }()
+
+        init(installed: String = "1.1", update: String = "1.2", signer: String = "com.example.sempre-test") throws {
+            _ = try makeApp(in: target.deletingLastPathComponent(), version: installed)
+            _ = try makeApp(in: staged.deletingLastPathComponent(), identifier: signer, version: update)
+        }
+
+        /// An `open` stand-in: the "new app" either acknowledges itself, or never starts.
+        func opener(acknowledging version: String?) throws -> String {
+            let script = dir.appendingPathComponent("open.sh")
+            let body = version.map { "printf '%s\\n' '\($0)' > '\(ack.path)'" } ?? ":"
+            try "#!/bin/sh\n\(body)\n".write(to: script, atomically: true, encoding: .utf8)
+            try FileManager.default.setAttributes([.posixPermissions: 0o755], ofItemAtPath: script.path)
+            return script.path
+        }
+
+        /// Runs the helper to the end and returns its exit status.
+        func run(expected: String = "1.1", opener: String) throws -> Int32 {
+            let p = Process()
+            p.executableURL = URL(fileURLWithPath: "/bin/sh")
+            p.arguments = try Updates.installCommand(staged: staged, target: target, pid: pid, ack: ack, expected: expected,
+                                                     requirement: #"identifier "com.example.sempre-test""#, opener: opener,
+                                                     pkill: "/usr/bin/true", pgrep: "/usr/bin/false", quitWait: 2, ackWait: 1)
+            p.standardError = FileHandle.nullDevice
+            try p.run()
+            p.waitUntilExit()
+            return p.terminationStatus
+        }
+
+        /// Whatever the helper leaves next to the app besides it: a backup or a half-copied candidate.
+        var leftovers: [String] {
+            (try? FileManager.default.contentsOfDirectory(atPath: folder.path).filter { $0 != "Sempre.app" }) ?? ["?"]
+        }
     }
 
-    @Test func swappingNeverOverwritesAnotherFile() throws {
-        let dir = tempDir()
-        let current = try makeApp(in: dir.appendingPathComponent("Applications"), version: "1.1")
-        let keep = dir.appendingPathComponent("Applications/Sempre (previous).app")
-        try FileManager.default.createDirectory(at: keep, withIntermediateDirectories: true)
-        let first = try Updates.replace(current, with: try makeApp(in: dir.appendingPathComponent("a"), version: "1.2"))
-        let second = try Updates.replace(current, with: try makeApp(in: dir.appendingPathComponent("b"), version: "1.3"))
-        #expect(first != second)
-        #expect(Updates.version(of: first) == "1.1")
-        #expect(Updates.version(of: second) == "1.2")
-        #expect(Updates.version(of: current) == "1.3")
-        #expect(FileManager.default.fileExists(atPath: keep.path))
+    @Test func helperSwapsInTheNewVersionOnceItStarts() throws {
+        let i = try Install()
+        #expect(try i.run(opener: i.opener(acknowledging: "1.2")) == 0)
+        #expect(Updates.version(of: i.target) == "1.2")
+        #expect(i.leftovers.isEmpty)
+        #expect(!FileManager.default.fileExists(atPath: i.staged.deletingLastPathComponent().path))
+    }
+
+    @Test func helperPutsTheOldVersionBackIfTheNewOneDoesntStart() throws {
+        let i = try Install()
+        #expect(try i.run(opener: i.opener(acknowledging: nil)) == 4)
+        #expect(Updates.version(of: i.target) == "1.1")
+        #expect(i.leftovers.isEmpty)
+        // Acknowledged by the wrong version (the old one, reopened elsewhere) is no acknowledgement either.
+        let j = try Install()
+        #expect(try j.run(opener: j.opener(acknowledging: "1.1")) == 4)
+        #expect(Updates.version(of: j.target) == "1.1")
+    }
+
+    @Test func helperLeavesAnAppThatChangedMeanwhileAlone() throws {
+        let i = try Install(installed: "1.1.5")
+        #expect(try i.run(opener: i.opener(acknowledging: "1.2")) == 3)
+        #expect(Updates.version(of: i.target) == "1.1.5")
+        #expect(i.leftovers.isEmpty)
+        #expect(!FileManager.default.fileExists(atPath: i.staged.path))
+    }
+
+    @Test func helperChecksTheCopysSignature() throws {
+        let i = try Install(signer: "com.example.someone-else")
+        #expect(try i.run(opener: i.opener(acknowledging: "1.2")) == 1)
+        #expect(Updates.version(of: i.target) == "1.1")
+        #expect(i.leftovers.isEmpty)
+    }
+
+    @Test func installIsRefusedWhenItCantWork() throws {
+        let i = try Install()
+        func command(staged: URL? = nil, target: URL? = nil, expected: String = "1.1") throws -> [String] {
+            try Updates.installCommand(staged: staged ?? i.staged, target: target ?? i.target, pid: i.pid, ack: i.ack,
+                                       expected: expected, requirement: "identifier x")
+        }
+        #expect(try command().count > 10)
+        // Not newer than what's installed.
+        #expect(throws: Updates.UpdateError.self) { try command(expected: "1.2") }
+        // A backup from an earlier attempt in the way.
+        let backup = i.folder.appendingPathComponent(".Sempre.previous-\(i.pid).app")
+        try FileManager.default.createDirectory(at: backup, withIntermediateDirectories: true)
+        #expect(throws: Updates.UpdateError.self) { try command() }
+        try FileManager.default.removeItem(at: backup)
+        // Running from a translocated copy, or not from an app at all.
+        #expect(throws: Updates.UpdateError.self) { try command(target: URL(fileURLWithPath: "/private/var/folders/x/AppTranslocation/y/d/Sempre.app")) }
+        #expect(throws: Updates.UpdateError.self) { try command(target: i.dir) }
     }
 }

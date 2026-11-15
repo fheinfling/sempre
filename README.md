@@ -77,12 +77,22 @@ the first time, or run `xattr -dr com.apple.quarantine /Applications/Sempre.app`
 
 ### Updates
 
-Once a day Sempre asks GitHub for the latest published release. When there's a newer version it offers to update
-(Update / Later / Skip This Version); ⋯ › Check for Updates… checks right away, and ⋯ › Check for Updates Automatically
-turns the daily check off. On Update it downloads the release zip and only installs it if it's notarized by Apple and
-signed by the same developer as the running app, then swaps it in (the old version goes to the Trash) and restarts.
-Your data isn't touched. Where it can't install by itself (a build you made, or an app it can't write to), it opens
-the release page instead.
+Once a day Sempre asks GitHub for the latest published release, quietly: a newer version shows as a line at the
+bottom of the panel (What's New, Update), and nothing is downloaded until you click Update. ⋯ › Check for Updates…
+checks right away, and ⋯ › Check for Updates Automatically turns the daily check off.
+
+On Update, Sempre downloads the release zip and checks it before anything changes: it has to match the SHA-256 GitHub
+publishes for it, be notarized by Apple, be signed by the same developer as the running app, and run on this Mac.
+Then a small helper takes over while Sempre quits:
+- it copies the new version next to the installed one, checks the copy's signature and version again, and swaps the
+  two, keeping the old version aside;
+- it opens the new version and waits for it to report that it started; only then is the old version deleted;
+- if it doesn't start, the helper puts the old version back and opens it, and the panel says the update didn't finish.
+
+It never replaces a version other than the one that asked (say you updated by hand meanwhile). Your data isn't
+touched. What the helper did is logged in `~/Library/Application Support/Sempre/Updates/update.log`. Where Sempre can't
+update itself (a build you made, or an app in a folder it can't write to), the line says so, and What's New leads to
+the download.
 
 ## Import from other apps
 
